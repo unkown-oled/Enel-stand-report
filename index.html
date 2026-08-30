@@ -33,6 +33,7 @@
         let contrattiFiltrati = [];
         let paginaCorrente = 1;
         let contrattiPerPagina = 10;
+        let promoterDaLicenziare = null;
 
         const databaseComuni = {
             "CATANIA": "C351", "MISTERBIANCO": "F250", "ACIREALE": "A028", "PATERNÒ": "G371",
@@ -242,6 +243,11 @@
             document.getElementById('modal-dettagli').classList.add('hidden');
         }
 
+        function chiudiModalLicenziamento() {
+            document.getElementById('modal-licenziamento').classList.add('hidden');
+            promoterDaLicenziare = null;
+        }
+
         async function apriDettagli(id) {
             const data = tuttiIContratti.find(c => c.id === id);
             if (!data) return;
@@ -252,16 +258,36 @@
             const fornit = [];
             if(data.luce) fornit.push('Luce'); if(data.gas) fornit.push('Gas'); if(data.dual_attivato) fornit.push('Dual'); if(data.fibra) fornit.push('Fibra'); if(data.polizza) fornit.push('Polizza');
             
+            const pagamenti = [];
+            if (data.iban) pagamenti.push('IBAN');
+            if (data.bollettino) pagamenti.push('Bollettino');
+            const metodoPagamentoStr = pagamenti.length > 0 ? pagamenti.join(' + ') : '-';
+
+            let statoBadge = '<span class="px-2 py-1 bg-green-100 text-green-800 rounded font-bold text-xs border border-green-300">CHIUSO</span>';
+            if (data.ko_non_conta) statoBadge = '<span class="px-2 py-1 bg-red-100 text-red-800 rounded font-bold text-xs border border-red-300">KO / NON SI CONTA</span>';
+            else if (data.fittizio) statoBadge = '<span class="px-2 py-1 bg-gray-200 text-gray-800 rounded font-bold text-xs border border-gray-400">FITTIZIO</span>';
+            else if (!data.codice_carrello || data.codice_carrello.trim() === '') statoBadge = '<span class="px-2 py-1 bg-yellow-100 text-yellow-800 rounded font-bold text-xs border border-yellow-300">SOSPESO</span>';
+
             d.innerHTML = `
-                <p><strong>Data:</strong> ${new Date(data.data_creazione).toLocaleDateString('it-IT')}</p>
-                <p><strong>Promoter:</strong> ${data.promoter ? data.promoter.nome + ' ' + data.promoter.cognome : (data.fittizio ? 'Nessuno (Fittizio)' : '-')}</p>
-                <p><strong>Sede:</strong> ${data.sedi ? data.sedi.nome : '-'}</p>
-                <p><strong>Cliente:</strong> ${data.cliente_nome || '-'}</p>
-                <p><strong>Codice Fiscale:</strong> ${data.codice_fiscale || '-'}</p>
-                <p><strong>Forniture:</strong> ${fornit.join(', ')}</p>
-                <p><strong>POD / PDR:</strong> ${pod_pdr}</p>
-                <p><strong>Codice Carrello:</strong> ${data.codice_carrello || 'Mancante'}</p>
-                <p><strong>Note:</strong> ${note}</p>
+                <div class="mb-4 pb-2 border-b flex items-center justify-between">
+                    <span class="font-bold text-gray-700">Stato Attuale:</span>
+                    ${statoBadge}
+                </div>
+                <div class="grid grid-cols-2 gap-y-2">
+                    <p class="col-span-2"><strong>Data:</strong> ${new Date(data.data_creazione).toLocaleDateString('it-IT')}</p>
+                    <p class="col-span-2"><strong>Promoter:</strong> ${data.promoter ? data.promoter.nome + ' ' + data.promoter.cognome : (data.fittizio ? 'Nessuno (Fittizio)' : '-')}</p>
+                    <p class="col-span-2"><strong>Sede:</strong> ${data.sedi ? data.sedi.nome : '-'}</p>
+                    <p class="col-span-2 mt-2 pt-2 border-t text-blue-700"><strong>Dati Cliente</strong></p>
+                    <p class="col-span-2"><strong>Cliente:</strong> ${data.cliente_nome || '-'}</p>
+                    <p><strong>CF:</strong> ${data.codice_fiscale || '-'}</p>
+                    <p><strong>Cellulare:</strong> ${data.cellulare || '-'}</p>
+                    <p class="col-span-2 mt-2 pt-2 border-t text-blue-700"><strong>Dati Contratto</strong></p>
+                    <p class="col-span-2"><strong>Forniture:</strong> ${fornit.length > 0 ? fornit.join(', ') : '-'}</p>
+                    <p class="col-span-2"><strong>Pagamento:</strong> ${metodoPagamentoStr}</p>
+                    <p class="col-span-2"><strong>POD / PDR:</strong> ${pod_pdr}</p>
+                    <p class="col-span-2 font-bold bg-blue-50 p-2 rounded">Codice SU: <span class="text-blue-700 font-mono">${data.codice_carrello || 'Mancante'}</span></p>
+                    <p class="col-span-2 mt-2"><strong>Note:</strong> ${note}</p>
+                </div>
             `;
             document.getElementById('modal-dettagli').classList.remove('hidden');
         }
@@ -562,7 +588,7 @@
             const tbodyP = document.getElementById('tabella-promoter-gestione');
             const tbodyS = document.getElementById('tabella-sedi-gestione');
             
-            tbodyP.innerHTML = '<tr><td colspan="3" class="p-3 text-center">Caricamento...</td></tr>';
+            tbodyP.innerHTML = '<tr><td colspan="4" class="p-3 text-center">Caricamento...</td></tr>';
             tbodyS.innerHTML = '<tr><td colspan="2" class="p-3 text-center">Caricamento...</td></tr>';
 
             const { data: promoters } = await db.from('promoter').select('*').order('attivo', { ascending: false }).order('cognome');
@@ -578,9 +604,15 @@
                         ? `<button onclick="toggleStatoPromoter(${p.id}, false)" class="text-xs bg-red-600 hover:bg-red-700 text-white font-bold px-2 py-1 rounded">Elimina</button>` 
                         : `<button onclick="toggleStatoPromoter(${p.id}, true)" class="text-xs bg-green-600 hover:bg-green-700 text-white font-bold px-2 py-1 rounded">Ripristina</button>`;
                     
+                    const dataAss = p.data_assunzione ? new Date(p.data_assunzione).toLocaleDateString('it-IT') : '-';
+                    const dataLic = p.data_licenziamento ? new Date(p.data_licenziamento).toLocaleDateString('it-IT') : '';
+                    
+                    const testoDate = p.attivo ? dataAss : `${dataAss} <br> <span class="text-[10px] font-bold text-red-500 uppercase">Licenz: ${dataLic}</span>`;
+
                     tbodyP.innerHTML += `
                         <tr class="border-b hover:bg-gray-50">
                             <td class="p-2 text-sm font-semibold">${p.nome} ${p.cognome}</td>
+                            <td class="p-2 text-sm text-gray-600 text-center leading-tight">${testoDate}</td>
                             <td class="p-2 text-center">${statusBadge}</td>
                             <td class="p-2 text-center">${actionBtn}</td>
                         </tr>
@@ -607,16 +639,41 @@
             e.preventDefault();
             const nome = document.getElementById('nuovo-p-nome').value.trim();
             const cognome = document.getElementById('nuovo-p-cognome').value.trim();
-            if(!nome || !cognome) return;
+            const data_assunzione = document.getElementById('nuovo-p-data-ass').value;
+            if(!nome || !cognome || !data_assunzione) return;
 
-            await db.from('promoter').insert([{ nome, cognome, attivo: true }]);
+            await db.from('promoter').insert([{ nome, cognome, attivo: true, data_assunzione }]);
             document.getElementById('form-nuovo-promoter').reset();
+            const dataOggi = new Date().toISOString().split('T')[0];
+            document.getElementById('nuovo-p-data-ass').value = dataOggi;
             await caricaDatiForm();
             caricaGestioneListe();
         }
 
         async function toggleStatoPromoter(id, stato) {
-            await db.from('promoter').update({ attivo: stato }).eq('id', id);
+            if (stato === false) { 
+                promoterDaLicenziare = id;
+                const dataOggi = new Date().toISOString().split('T')[0];
+                document.getElementById('input-data-licenziamento').value = dataOggi;
+                document.getElementById('modal-licenziamento').classList.remove('hidden');
+            } else { 
+                let payload = { attivo: true, data_licenziamento: null };
+                await db.from('promoter').update(payload).eq('id', id);
+                await caricaDatiForm();
+                caricaGestioneListe();
+            }
+        }
+
+        async function confermaLicenziamento() {
+            const dataLic = document.getElementById('input-data-licenziamento').value;
+            if (!dataLic) {
+                alert("Per favore, seleziona una data valida dal calendario.");
+                return;
+            }
+            
+            let payload = { attivo: false, data_licenziamento: dataLic };
+            await db.from('promoter').update(payload).eq('id', promoterDaLicenziare);
+            chiudiModalLicenziamento();
             await caricaDatiForm();
             caricaGestioneListe();
         }
@@ -644,7 +701,6 @@
 
         // ---------- SCHEDA STATISTICHE ----------
         async function caricaStatistiche() {
-            // FIX BUG 2: Selezioniamo anche la colonna "attivo" per capire correttamente se è licenziato o meno
             const { data: contratti, error: errC } = await db.from('contratti').select(`*, promoter (id, nome, cognome, attivo), sedi (id, nome)`);
             const { data: promoters, error: errP } = await db.from('promoter').select('*');
             if (errC || errP) { alert("Errore nel caricamento delle statistiche"); return; }
@@ -657,6 +713,10 @@
             const dataA = document.getElementById('stat-data-a').value;
             const statPromoterId = document.getElementById('stat-filtro-promoter').value;
             const statSedeId = document.getElementById('stat-filtro-sede').value;
+            const ordinamentoScelto = document.getElementById('stat-ordinamento-promoter').value;
+
+            const mappaPromoters = {};
+            listaPromoters.forEach(p => { mappaPromoters[p.id] = p; });
 
             const filtrati = contratti.filter(c => {
                 if (statSedeId && c.sede_id != statSedeId) return false;
@@ -679,14 +739,27 @@
             const statsPromoter = {};
             const statsSedi = {};
 
-            // Seleziona se pre-compilare con i "veri zeri" solo nel Mese Corrente
-            if (modalitaPeriodoAttiva === 'mese') {
+            // MESE CORRENTE: Aggiungi gli "zero" calcolando le date di assunzione e licenziamento
+            if (modalitaPeriodoAttiva === 'mese' && dataDa && dataA) {
                 listaPromoters.forEach(p => {
-                    if (p.attivo) {
+                    const assunzione = p.data_assunzione ? p.data_assunzione : '2000-01-01';
+                    const licenziamento = p.data_licenziamento;
+
+                    const inOrganicoNelMese = (assunzione <= dataA) && (!licenziamento || licenziamento >= dataDa);
+
+                    if (inOrganicoNelMese) {
                         if (statPromoterId && p.id != statPromoterId) return;
+                        
+                        const isAttualmenteAttivo = p.attivo;
+                        const etichetta = isAttualmenteAttivo 
+                            ? `${p.nome} ${p.cognome}` 
+                            : `${p.nome} ${p.cognome} <span class="text-red-500 text-[10px] uppercase font-bold ml-1">(Disattivato)</span>`;
+                            
                         statsPromoter[p.id] = { 
-                            nome: `${p.nome} ${p.cognome}`, 
-                            totale: 0, chiusi: 0, sospesi: 0, ko: 0, luce: 0, gas: 0, dual: 0, fibra: 0, polizza: 0 
+                            nome: etichetta,
+                            pNomePuro: `${p.nome} ${p.cognome}`,
+                            totale: 0, chiusi: 0, sospesi: 0, ko: 0, luce: 0, gas: 0, dual: 0, fibra: 0, polizza: 0,
+                            ultima_data: 0
                         };
                     }
                 });
@@ -697,6 +770,8 @@
                 const isFittizio = c.fittizio;
                 const isSospeso = !isKo && !isFittizio && (!c.codice_carrello || c.codice_carrello.trim() === '');
                 const isChiuso = !isKo && !isFittizio && !isSospeso;
+                
+                const tsDataCreazione = new Date(c.data_creazione).getTime();
 
                 if (isKo) ko++;
                 else if (isFittizio) fittizi++;
@@ -712,14 +787,10 @@
                     const pId = c.promoter_id || 0;
                     if (pId !== 0) {
                         if (!statsPromoter[pId]) {
-                            // Se il promoter non era pre-compilato, lo aggiungiamo. Determiniamo lo stato di attivazione dal contratto.
-                            let isAttivo = true;
-                            if (c.promoter && c.promoter.attivo === false) {
-                                isAttivo = false;
-                            }
-                            const pNome = c.promoter ? `${c.promoter.nome} ${c.promoter.cognome}` : 'Sconosciuto';
-                            const etichetta = isAttivo ? pNome : `${pNome} (Disattivato)`;
-                            statsPromoter[pId] = { nome: etichetta, totale: 0, chiusi: 0, sospesi: 0, ko: 0, luce: 0, gas: 0, dual: 0, fibra: 0, polizza: 0 };
+                            const isAttivo = mappaPromoters[pId] ? mappaPromoters[pId].attivo : false;
+                            const pNomePuro = mappaPromoters[pId] ? `${mappaPromoters[pId].nome} ${mappaPromoters[pId].cognome}` : 'Sconosciuto';
+                            const etichetta = isAttivo ? pNomePuro : `${pNomePuro} <span class="text-red-500 text-[10px] uppercase font-bold ml-1">(Disattivato)</span>`;
+                            statsPromoter[pId] = { nome: etichetta, pNomePuro: pNomePuro, totale: 0, chiusi: 0, sospesi: 0, ko: 0, luce: 0, gas: 0, dual: 0, fibra: 0, polizza: 0, ultima_data: 0 };
                         }
                         statsPromoter[pId].totale++;
                         if (isChiuso) statsPromoter[pId].chiusi++;
@@ -730,9 +801,13 @@
                         if (c.dual_attivato) statsPromoter[pId].dual++;
                         if (c.fibra) statsPromoter[pId].fibra++;
                         if (c.polizza) statsPromoter[pId].polizza++;
+                        
+                        if (tsDataCreazione > statsPromoter[pId].ultima_data) {
+                            statsPromoter[pId].ultima_data = tsDataCreazione;
+                        }
                     } else {
                         if (!statsPromoter[0]) {
-                            statsPromoter[0] = { nome: 'Promoter Non Assegnato', totale: 0, chiusi: 0, sospesi: 0, ko: 0, luce: 0, gas: 0, dual: 0, fibra: 0, polizza: 0 };
+                            statsPromoter[0] = { nome: 'Promoter Non Assegnato', pNomePuro: 'Promoter Non Assegnato', totale: 0, chiusi: 0, sospesi: 0, ko: 0, luce: 0, gas: 0, dual: 0, fibra: 0, polizza: 0, ultima_data: 0 };
                         }
                         statsPromoter[0].totale++;
                         if (isChiuso) statsPromoter[0].chiusi++;
@@ -743,6 +818,10 @@
                         if (c.dual_attivato) statsPromoter[0].dual++;
                         if (c.fibra) statsPromoter[0].fibra++;
                         if (c.polizza) statsPromoter[0].polizza++;
+                        
+                        if (tsDataCreazione > statsPromoter[0].ultima_data) {
+                            statsPromoter[0].ultima_data = tsDataCreazione;
+                        }
                     }
                 }
 
@@ -761,9 +840,20 @@
             document.getElementById('stat-fittizi').textContent = fittizi;
 
             const arrayPromoters = Object.values(statsPromoter).sort((a, b) => {
-                if (a.nome === 'Promoter Non Assegnato') return 1;
-                if (b.nome === 'Promoter Non Assegnato') return -1;
-                return a.nome.localeCompare(b.nome);
+                if (a.pNomePuro === 'Promoter Non Assegnato') return 1;
+                if (b.pNomePuro === 'Promoter Non Assegnato') return -1;
+                
+                if (ordinamentoScelto === 'chiusi') {
+                    if (b.chiusi !== a.chiusi) return b.chiusi - a.chiusi;
+                    return a.pNomePuro.localeCompare(b.pNomePuro); 
+                } else if (ordinamentoScelto === 'alfabetico') {
+                    return a.pNomePuro.localeCompare(b.pNomePuro);
+                } else {
+                    const dataA = a.ultima_data || 0;
+                    const dataB = b.ultima_data || 0;
+                    if (dataB !== dataA) return dataB - dataA;
+                    return a.pNomePuro.localeCompare(b.pNomePuro); 
+                }
             });
 
             const tbodyP = document.getElementById('stat-tabella-promoter');
@@ -1007,6 +1097,9 @@
         }
 
         window.onload = function() {
+            const dataOggi = new Date().toISOString().split('T')[0];
+            document.getElementById('nuovo-p-data-ass').value = dataOggi;
+            
             caricaDatiForm().then(() => {
                 cambiaScheda('home');
             });
@@ -1030,7 +1123,6 @@
             <button id="btn-nav-calcola-cf" onclick="cambiaScheda('calcola-cf')" class="px-4 py-2 rounded-t font-semibold shadow-sm transition tab-inattivo">🧮 Calcola CF</button>
         </div>
 
-        <!-- SCHEDA 0: HOME DASHBOARD -->
         <div id="sez-home" class="hidden p-6 bg-white border border-gray-200 rounded shadow-sm text-center">
             <h2 class="text-2xl font-bold text-blue-600 mb-2">Benvenuto in Enel Stand Manager</h2>
             <p class="text-gray-500 mb-6">Seleziona la tua sede per iniziare e monitorare la giornata in tempo reale.</p>
@@ -1061,7 +1153,6 @@
             </div>
         </div>
 
-        <!-- SCHEDA 1: NUOVO CONTRATTO -->
         <div id="sez-nuovo" class="hidden p-6 bg-gray-50 border border-gray-200 rounded shadow-sm">
             <div id="container-nuovo">
                 <div id="il-mio-form">
@@ -1142,7 +1233,6 @@
             </div>
         </div>
 
-        <!-- SCHEDA 2: REGISTRO -->
         <div id="sez-registro" class="hidden p-4 bg-white border border-gray-200 rounded shadow-sm">
             <div class="mb-6 p-4 bg-blue-50 rounded border border-blue-100">
                 <h3 class="text-sm font-bold text-blue-800 mb-3">🔍 Filtra Contratti</h3>
@@ -1216,7 +1306,6 @@
             </div>
         </div>
 
-        <!-- SCHEDA 3: STATISTICHE -->
         <div id="sez-statistiche" class="hidden p-6 bg-white border border-gray-200 rounded shadow-sm space-y-6">
             
             <div class="p-4 bg-blue-50 border border-blue-100 rounded">
@@ -1273,9 +1362,19 @@
             </div>
 
             <div class="bg-gray-50 p-4 rounded border">
-                <h3 class="text-lg font-bold text-gray-800 mb-3">👥 Dettaglio Performance per Promoter</h3>
-                <div class="overflow-x-auto">
-                    <table class="w-full text-left bg-white border rounded">
+                <div class="flex justify-between items-center mb-3">
+                    <h3 class="text-lg font-bold text-gray-800">👥 Dettaglio Performance per Promoter</h3>
+                    <div class="flex items-center gap-2">
+                        <label class="text-xs font-bold text-gray-700">Ordina per:</label>
+                        <select id="stat-ordinamento-promoter" onchange="caricaStatistiche()" class="p-1 border rounded text-xs bg-white font-semibold">
+                            <option value="data">Ultimo Contratto (Default)</option>
+                            <option value="chiusi">Chiusi Reali (Decresc.)</option>
+                            <option value="alfabetico">Alfabetico</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="overflow-x-auto bg-white border rounded">
+                    <table class="w-full text-left">
                         <thead class="bg-gray-100 border-b">
                             <tr class="text-xs font-bold text-gray-700">
                                 <th class="p-3">Promoter</th>
@@ -1283,8 +1382,16 @@
                                 <th class="p-3 text-center bg-green-100 text-green-900">Chiusi Reali</th>
                                 <th class="p-3 text-center text-yellow-700">Sospesi</th>
                                 <th class="p-3 text-center text-red-700">KO</th>
-                                <th class="p-3 text-center cursor-help" title="LEGENDA MIX FORNITURE:&#10;L = Luce&#10;G = Gas&#10;D = Dual (1 Luce + 1 Gas)&#10;F = Fibra&#10;P = Polizza">
-                                    <span class="border-b border-dashed border-gray-500">Mix (L / G / D / F / P) ℹ️</span>
+                                <th class="p-3 text-center cursor-help group relative">
+                                    <span class="border-b border-dashed border-gray-500">Mix (L/G/D/F/P) ℹ️</span>
+                                    <div class="absolute right-0 top-full mt-2 hidden group-hover:block z-50 w-56 p-3 bg-gray-900 text-white text-xs rounded-lg shadow-xl font-normal leading-relaxed text-left">
+                                        <p class="font-bold text-yellow-400 border-b border-gray-700 pb-1 mb-1">Legenda Mix Forniture:</p>
+                                        <p><strong class="text-green-400">L:</strong> Luce</p>
+                                        <p><strong class="text-green-400">G:</strong> Gas</p>
+                                        <p><strong class="text-blue-400">D:</strong> DUAL (1 Luce + 1 Gas)</p>
+                                        <p><strong class="text-purple-400">F:</strong> Fibra</p>
+                                        <p><strong class="text-orange-400">P:</strong> Polizza</p>
+                                    </div>
                                 </th>
                             </tr>
                         </thead>
@@ -1305,16 +1412,16 @@
             </div>
         </div>
 
-        <!-- SCHEDA 4: GESTIONE LISTE -->
         <div id="sez-liste" class="hidden p-6 bg-white border border-gray-200 rounded shadow-sm">
             <h2 class="text-2xl font-bold mb-6 text-gray-800 border-b pb-2">⚙️ Gestione Liste (Promoter e Sedi)</h2>
             <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
                 
                 <div class="bg-gray-50 p-4 rounded border">
                     <h3 class="text-lg font-bold text-blue-700 mb-4">👥 Team Promoter</h3>
-                    <form id="form-nuovo-promoter" onsubmit="aggiungiPromoter(event)" class="mb-4 flex gap-2">
-                        <input type="text" id="nuovo-p-nome" placeholder="Nome" required class="w-1/2 p-2 border rounded bg-white text-sm">
-                        <input type="text" id="nuovo-p-cognome" placeholder="Cognome" required class="w-1/2 p-2 border rounded bg-white text-sm">
+                    <form id="form-nuovo-promoter" onsubmit="aggiungiPromoter(event)" class="mb-4 flex flex-wrap gap-2">
+                        <input type="text" id="nuovo-p-nome" placeholder="Nome" required class="flex-1 p-2 border rounded bg-white text-sm min-w-[100px]">
+                        <input type="text" id="nuovo-p-cognome" placeholder="Cognome" required class="flex-1 p-2 border rounded bg-white text-sm min-w-[100px]">
+                        <input type="date" id="nuovo-p-data-ass" required class="w-32 p-2 border rounded bg-white text-sm" title="Data Assunzione">
                         <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-2 rounded text-sm whitespace-nowrap">+ Aggiungi</button>
                     </form>
                     <div class="overflow-x-auto max-h-80 overflow-y-auto">
@@ -1322,8 +1429,9 @@
                             <thead class="bg-gray-100 border-b">
                                 <tr>
                                     <th class="p-2 text-xs font-bold text-gray-700">Promoter</th>
+                                    <th class="p-2 text-xs font-bold text-gray-700 text-center">Assunzione</th>
                                     <th class="p-2 text-xs font-bold text-gray-700 text-center">Stato</th>
-                                    <th class="p-2 text-xs font-bold text-gray-700 text-center">Elimina</th>
+                                    <th class="p-2 text-xs font-bold text-gray-700 text-center">Azione</th>
                                 </tr>
                             </thead>
                             <tbody id="tabella-promoter-gestione"></tbody>
@@ -1353,7 +1461,6 @@
             </div>
         </div>
 
-        <!-- SCHEDA 5: CALCOLO CODICE FISCALE -->
         <div id="sez-calcola-cf" class="hidden p-8 bg-white border border-gray-200 rounded shadow-sm max-w-3xl mx-auto">
             <h2 class="text-xl font-bold mb-6 text-gray-800 border-b pb-2">🧮 Calcolo Codice Fiscale</h2>
             
@@ -1423,7 +1530,6 @@
 
     </div>
 
-    <!-- SOTTOFINESTRA MODIFICA -->
     <div id="modal-modifica" class="hidden fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4">
         <div class="bg-white rounded-lg shadow-xl w-full max-w-6xl max-h-[95vh] overflow-y-auto p-6 relative">
             <button onclick="chiudiModalModifica()" class="absolute top-4 right-4 text-gray-500 hover:text-red-600 font-bold text-xl">X</button>
@@ -1431,13 +1537,24 @@
         </div>
     </div>
 
-    <!-- SOTTOFINESTRA DETTAGLI -->
     <div id="modal-dettagli" class="hidden fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4">
         <div class="bg-white rounded-lg shadow-xl w-full max-w-md p-6 relative">
             <button onclick="chiudiModalDettagli()" class="absolute top-4 right-4 text-gray-500 hover:text-red-600 font-bold text-xl">X</button>
             <h3 class="text-lg font-bold text-blue-600 mb-4 border-b pb-2">Dettagli Contratto</h3>
             <div id="dettagli-content" class="space-y-2 text-sm text-gray-800"></div>
             <button onclick="chiudiModalDettagli()" class="mt-6 w-full py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold rounded">Chiudi</button>
+        </div>
+    </div>
+
+    <div id="modal-licenziamento" class="hidden fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4">
+        <div class="bg-white rounded-lg shadow-xl w-full max-w-sm p-6 relative">
+            <h3 class="text-lg font-bold text-red-600 mb-4 border-b pb-2">Licenzia Promoter</h3>
+            <p class="text-sm text-gray-600 mb-3">Seleziona la data effettiva di licenziamento:</p>
+            <input type="date" id="input-data-licenziamento" class="w-full p-2 border border-gray-300 rounded bg-white mb-6 focus:border-blue-500 outline-none">
+            <div class="flex justify-end gap-3">
+                <button onclick="chiudiModalLicenziamento()" class="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold rounded shadow-sm">Annulla</button>
+                <button onclick="confermaLicenziamento()" class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-bold rounded shadow-sm">Conferma Licenziamento</button>
+            </div>
         </div>
     </div>
 
