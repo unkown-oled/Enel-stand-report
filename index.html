@@ -1,0 +1,1445 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enel Stand Manager</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <style>
+        input[type="checkbox"] { transform: scale(1.5); margin-right: 8px; cursor: pointer; }
+        input:disabled, button:disabled, select:disabled { cursor: not-allowed; opacity: 0.7; }
+        .tab-attivo { background-color: #2563eb; color: white; border-bottom: 3px solid #1d4ed8; }
+        .tab-inattivo { background-color: #f3f4f6; color: #374151; border-bottom: 3px solid transparent; }
+        .tab-inattivo:hover { background-color: #e5e7eb; }
+        .cf-label { color: #0d6854; font-weight: 700; font-size: 0.85rem; letter-spacing: 0.05em; }
+        .cf-input { background-color: #ededed; border: 1px solid #d1d5db; border-radius: 4px; padding: 0.5rem 0.75rem; width: 100%; color: #374151; outline: none; }
+        .cf-input:focus { border-color: #0d6854; background-color: #ffffff; }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-800 font-sans">
+
+    <script>
+        const SUPABASE_URL = 'https://htmbuaiqolietcyjzgct.supabase.co';
+        const SUPABASE_KEY = 'sb_publishable_RJkiCWD7payPFOxUlHz_uw_yQMz5Ydf';
+        const db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+        let idContrattoInModifica = null;
+        let ultimaSedeSelezionata = "";
+        let sessoSelezionatoCF = "M";
+        let modalitaPeriodoAttiva = "tutto"; 
+        
+        let tuttiIContratti = [];
+        let contrattiFiltrati = [];
+        let paginaCorrente = 1;
+        let contrattiPerPagina = 10;
+
+        const databaseComuni = {
+            "CATANIA": "C351", "MISTERBIANCO": "F250", "ACIREALE": "A028", "PATERNÒ": "G371",
+            "ADRANO": "A056", "BELPASSO": "A766", "BIANCAVILLA": "A841", "BRONTE": "B202",
+            "CALTAGIRONE": "B428", "GIARRE": "E017", "GRAVINA DI CATANIA": "E156", "MASCALUCIA": "F005",
+            "PALAGONIA": "G253", "RANDAZZO": "H175", "RIPOSTO": "H325", "SAN GIOVANNI LA PUNTA": "H922",
+            "SAN GREGORIO DI CATANIA": "H940", "SANT'AGATA LI BATTIATI": "I202", "TRECASTAGNI": "L355",
+            "TREMESTIERI ETNEO": "L369", "VIAGRANDE": "L828", "ZAFFERANA ETNEA": "M139",
+            "PALERMO": "G273", "MESSINA": "F158", "SIRACUSA": "I754", "RAGUSA": "H163",
+            "TRAPANI": "L331", "CALTANISSETTA": "B429", "ENNA": "C342", "AGRIGENTO": "A089",
+            "ROMA": "H501", "MILANO": "F205", "NAPOLI": "F839", "TORINO": "L219", "FIRENZE": "D612"
+        };
+
+        function cambiaScheda(scheda) {
+            document.getElementById('sez-home').classList.add('hidden');
+            document.getElementById('sez-nuovo').classList.add('hidden');
+            document.getElementById('sez-registro').classList.add('hidden');
+            document.getElementById('sez-statistiche').classList.add('hidden');
+            document.getElementById('sez-liste').classList.add('hidden');
+            document.getElementById('sez-calcola-cf').classList.add('hidden');
+            
+            if (document.getElementById('btn-nav-nuovo')) document.getElementById('btn-nav-nuovo').className = "px-4 py-2 rounded-t font-semibold shadow-sm transition tab-inattivo";
+            if (document.getElementById('btn-nav-registro')) document.getElementById('btn-nav-registro').className = "px-4 py-2 rounded-t font-semibold shadow-sm transition tab-inattivo";
+            if (document.getElementById('btn-nav-statistiche')) document.getElementById('btn-nav-statistiche').className = "px-4 py-2 rounded-t font-semibold shadow-sm transition tab-inattivo";
+            if (document.getElementById('btn-nav-liste')) document.getElementById('btn-nav-liste').className = "px-4 py-2 rounded-t font-semibold shadow-sm transition tab-inattivo";
+            if (document.getElementById('btn-nav-calcola-cf')) document.getElementById('btn-nav-calcola-cf').className = "px-4 py-2 rounded-t font-semibold shadow-sm transition tab-inattivo";
+
+            document.getElementById('sez-' + scheda).classList.remove('hidden');
+            
+            if (document.getElementById('btn-nav-' + scheda)) {
+                document.getElementById('btn-nav-' + scheda).className = "px-4 py-2 rounded-t font-semibold shadow-sm transition tab-attivo";
+            }
+
+            if (scheda === 'home') {
+                aggiornaDashboardHome();
+            } else if (scheda === 'nuovo') {
+                spostaFormIn('container-nuovo');
+                resettaForm();
+            } else if (scheda === 'registro') {
+                caricaRegistro();
+            } else if (scheda === 'statistiche') {
+                caricaStatistiche();
+            } else if (scheda === 'liste') {
+                caricaGestioneListe();
+            } else if (scheda === 'calcola-cf') {
+                inizializzaSelettoriCF();
+            }
+        }
+
+        function spostaFormIn(idContainer) {
+            const formContainer = document.getElementById('il-mio-form');
+            document.getElementById(idContainer).appendChild(formContainer);
+        }
+
+        async function caricaDatiForm() {
+            const selectP = document.getElementById('select-promoter');
+            const selectS = document.getElementById('select-sede');
+            const homeS = document.getElementById('home-select-sede');
+            const filtroP = document.getElementById('filtro-promoter');
+            const filtroS = document.getElementById('filtro-sede');
+            const statP = document.getElementById('stat-filtro-promoter');
+            const statS = document.getElementById('stat-filtro-sede');
+
+            const { data: promoters } = await db.from('promoter').select('*').eq('attivo', true).order('nome');
+            if (promoters) {
+                selectP.innerHTML = '<option value="">Seleziona...</option>';
+                filtroP.innerHTML = '<option value="">Tutti i Promoter</option>';
+                statP.innerHTML = '<option value="">Tutti i Promoter</option>';
+                promoters.forEach(p => {
+                    selectP.innerHTML += `<option value="${p.id}">${p.nome} ${p.cognome}</option>`;
+                    filtroP.innerHTML += `<option value="${p.id}">${p.nome} ${p.cognome}</option>`;
+                    statP.innerHTML += `<option value="${p.id}">${p.nome} ${p.cognome}</option>`;
+                });
+            }
+
+            const { data: sedi } = await db.from('sedi').select('*').order('nome');
+            if (sedi) {
+                selectS.innerHTML = '<option value="">Seleziona...</option>';
+                homeS.innerHTML = '<option value="">-- Nessuna sede selezionata --</option>';
+                filtroS.innerHTML = '<option value="">Tutte le Sedi</option>';
+                statS.innerHTML = '<option value="">Tutte le Sedi</option>';
+                sedi.forEach(s => {
+                    selectS.innerHTML += `<option value="${s.id}">${s.nome}</option>`;
+                    homeS.innerHTML += `<option value="${s.id}">${s.nome}</option>`;
+                    filtroS.innerHTML += `<option value="${s.id}">${s.nome}</option>`;
+                    statS.innerHTML += `<option value="${s.id}">${s.nome}</option>`;
+                });
+            }
+            
+            if (ultimaSedeSelezionata) {
+                selectS.value = ultimaSedeSelezionata;
+                homeS.value = ultimaSedeSelezionata;
+            }
+            
+            aggiornaStatoCampi();
+            aggiornaDashboardHome();
+        }
+
+        async function aggiornaDashboardHome() {
+            const homeSedeSelect = document.getElementById('home-select-sede');
+            if (homeSedeSelect.value) {
+                ultimaSedeSelezionata = homeSedeSelect.value;
+            } else {
+                ultimaSedeSelezionata = "";
+            }
+
+            const oggi = new Date();
+            const y = oggi.getFullYear();
+            const m = String(oggi.getMonth() + 1).padStart(2, '0');
+            const d = String(oggi.getDate()).padStart(2, '0');
+            const oggiStrLocale = `${y}-${m}-${d}`;
+            
+            document.getElementById('home-data-oggi').textContent = oggi.toLocaleDateString('it-IT');
+
+            const { data, error } = await db.from('contratti').select('*');
+            if (error) return;
+
+            let filtrati = data.filter(c => c.data_creazione && c.data_creazione.split('T')[0] === oggiStrLocale);
+
+            if (ultimaSedeSelezionata) {
+                filtrati = filtrati.filter(c => c.sede_id == ultimaSedeSelezionata);
+            }
+
+            let totale = 0, chiusi = 0, sospesi = 0, ko = 0, fittizi = 0;
+
+            filtrati.forEach(c => {
+                totale++;
+                if (c.ko_non_conta) ko++;
+                else if (c.fittizio) fittizi++;
+                else if (!c.codice_carrello || c.codice_carrello.trim() === '') sospesi++;
+                else chiusi++;
+            });
+
+            document.getElementById('home-totale').textContent = totale;
+            document.getElementById('home-chiusi').textContent = chiusi;
+            document.getElementById('home-sospesi').textContent = sospesi;
+            document.getElementById('home-ko').textContent = ko;
+        }
+
+        function memorizzaSedeSelezionataDaForm() {
+            const val = document.getElementById('select-sede').value;
+            if (val) ultimaSedeSelezionata = val;
+        }
+
+        function gestisciFittizio() {
+            const chkFittizio = document.getElementById('chk-fittizio').checked;
+            const selectP = document.getElementById('select-promoter');
+            if (chkFittizio) {
+                selectP.value = '';
+                selectP.disabled = true;
+                selectP.classList.add('bg-gray-200');
+            } else {
+                selectP.disabled = false;
+                selectP.classList.remove('bg-gray-200');
+            }
+        }
+
+        function aggiornaStatoCampi() {
+            const chkLuce = document.getElementById('chk-luce'), chkGas = document.getElementById('chk-gas'), chkDual = document.getElementById('chk-dual');
+            const inputPod = document.getElementById('input-pod'), inputPdr = document.getElementById('input-pdr');
+
+            if (chkLuce.checked && chkGas.checked) { chkDual.checked = true; chkLuce.checked = false; chkGas.checked = false; }
+            if (chkDual.checked) { chkLuce.checked = false; chkLuce.disabled = true; chkGas.checked = false; chkGas.disabled = true; } 
+            else { chkLuce.disabled = false; chkGas.disabled = false; }
+            
+            if (chkLuce.checked || chkDual.checked) { inputPod.disabled = false; inputPod.classList.remove('bg-gray-200'); } 
+            else { inputPod.disabled = true; inputPod.value = ''; inputPod.classList.add('bg-gray-200'); }
+            
+            if (chkGas.checked || chkDual.checked) { inputPdr.disabled = false; inputPdr.classList.remove('bg-gray-200'); } 
+            else { inputPdr.disabled = true; inputPdr.value = ''; inputPdr.classList.add('bg-gray-200'); }
+        }
+
+        function resettaForm() {
+            idContrattoInModifica = null;
+            document.getElementById('form-contratto').reset();
+            document.getElementById('titolo-form').textContent = "Compila Nuovo Contratto";
+            
+            const btn = document.getElementById('btn-salva');
+            btn.textContent = "Salva Contratto";
+            btn.disabled = false; 
+
+            const oggi = new Date().toISOString().split('T')[0];
+            document.getElementById('input-data').value = oggi;
+
+            if (ultimaSedeSelezionata) {
+                document.getElementById('select-sede').value = ultimaSedeSelezionata;
+            }
+
+            document.getElementById('btn-annulla-modifica').classList.add('hidden');
+            document.getElementById('btn-annulla-nuovo').classList.remove('hidden');
+            
+            gestisciFittizio();
+            aggiornaStatoCampi();
+        }
+
+        function annullaNuovo() {
+            resettaForm();
+            cambiaScheda('home');
+        }
+
+        function chiudiModalModifica() {
+            document.getElementById('modal-modifica').classList.add('hidden');
+            resettaForm();
+        }
+
+        function chiudiModalDettagli() {
+            document.getElementById('modal-dettagli').classList.add('hidden');
+        }
+
+        async function apriDettagli(id) {
+            const data = tuttiIContratti.find(c => c.id === id);
+            if (!data) return;
+            
+            const d = document.getElementById('dettagli-content');
+            const pod_pdr = data.pod_pdr || '-';
+            const note = data.note || '-';
+            const fornit = [];
+            if(data.luce) fornit.push('Luce'); if(data.gas) fornit.push('Gas'); if(data.dual_attivato) fornit.push('Dual'); if(data.fibra) fornit.push('Fibra'); if(data.polizza) fornit.push('Polizza');
+            
+            d.innerHTML = `
+                <p><strong>Data:</strong> ${new Date(data.data_creazione).toLocaleDateString('it-IT')}</p>
+                <p><strong>Promoter:</strong> ${data.promoter ? data.promoter.nome + ' ' + data.promoter.cognome : (data.fittizio ? 'Nessuno (Fittizio)' : '-')}</p>
+                <p><strong>Sede:</strong> ${data.sedi ? data.sedi.nome : '-'}</p>
+                <p><strong>Cliente:</strong> ${data.cliente_nome || '-'}</p>
+                <p><strong>Codice Fiscale:</strong> ${data.codice_fiscale || '-'}</p>
+                <p><strong>Forniture:</strong> ${fornit.join(', ')}</p>
+                <p><strong>POD / PDR:</strong> ${pod_pdr}</p>
+                <p><strong>Codice Carrello:</strong> ${data.codice_carrello || 'Mancante'}</p>
+                <p><strong>Note:</strong> ${note}</p>
+            `;
+            document.getElementById('modal-dettagli').classList.remove('hidden');
+        }
+
+        async function apriModifica(id) {
+            const { data, error } = await db.from('contratti').select('*').eq('id', id).single();
+            if (error) { alert("Errore nel caricamento del contratto"); return; }
+
+            idContrattoInModifica = id;
+            spostaFormIn('container-modal'); 
+
+            const dataPura = data.data_creazione ? data.data_creazione.split('T')[0] : '';
+            document.getElementById('input-data').value = dataPura;
+
+            document.getElementById('select-promoter').value = data.promoter_id || '';
+            document.getElementById('select-sede').value = data.sede_id || '';
+            document.getElementById('input-cliente').value = data.cliente_nome || '';
+            document.getElementById('input-cf').value = data.codice_fiscale || '';
+            document.getElementById('input-cellulare').value = data.cellulare || '';
+            document.getElementById('input-carrello').value = data.codice_carrello || '';
+            document.getElementById('input-note').value = data.note || '';
+
+            let pod = "", pdr = "";
+            let str = data.pod_pdr || "";
+            if (str.includes("POD: ") && str.includes(" | PDR: ")) {
+                let parts = str.split(" | PDR: "); pod = parts[0].replace("POD: ", ""); pdr = parts[1];
+            } else {
+                if (data.gas && !data.dual_attivato) pdr = str; else pod = str;
+            }
+            document.getElementById('input-pod').value = pod;
+            document.getElementById('input-pdr').value = pdr;
+
+            document.getElementById('chk-luce').checked = data.luce;
+            document.getElementById('chk-gas').checked = data.gas;
+            document.getElementById('chk-dual').checked = data.dual_attivato;
+            document.getElementById('chk-fibra').checked = data.fibra;
+            document.getElementById('chk-polizza').checked = data.polizza;
+            document.getElementById('chk-iban').checked = data.iban;
+            document.getElementById('chk-bollettino').checked = data.bollettino;
+            document.getElementById('chk-fittizio').checked = data.fittizio;
+            document.getElementById('chk-ko').checked = data.ko_non_conta;
+
+            document.getElementById('titolo-form').textContent = "✏️ Modifica Contratto";
+            
+            const btn = document.getElementById('btn-salva');
+            btn.textContent = "Aggiorna Contratto";
+            btn.disabled = false;
+
+            document.getElementById('btn-annulla-nuovo').classList.add('hidden');
+            document.getElementById('btn-annulla-modifica').classList.remove('hidden');
+            
+            gestisciFittizio();
+            aggiornaStatoCampi();
+            document.getElementById('modal-modifica').classList.remove('hidden');
+        }
+
+        async function eliminaContratto(id) {
+            if (!confirm("Sei sicuro di voler eliminare definitivamente questo contratto?")) return;
+            const { error } = await db.from('contratti').delete().eq('id', id);
+            if (error) {
+                alert("Errore durante l'eliminazione: " + error.message);
+            } else {
+                caricaRegistro();
+            }
+        }
+
+        async function salvaContratto(event) {
+            event.preventDefault(); 
+            const msg = document.getElementById('messaggio-esito');
+            const btn = document.getElementById('btn-salva');
+            
+            btn.disabled = true; 
+            btn.textContent = "Salvataggio in corso...";
+
+            const pod_val = document.getElementById('input-pod').value.trim();
+            const pdr_val = document.getElementById('input-pdr').value.trim();
+            let pod_pdr_combinato = (pod_val && pdr_val) ? `POD: ${pod_val} | PDR: ${pdr_val}` : (pod_val || pdr_val || "");
+
+            let dataSelezionata = document.getElementById('input-data').value;
+            if(dataSelezionata) { dataSelezionata = dataSelezionata + 'T12:00:00Z'; }
+
+            const sedeScelta = document.getElementById('select-sede').value;
+            if (sedeScelta) {
+                ultimaSedeSelezionata = sedeScelta;
+                document.getElementById('home-select-sede').value = ultimaSedeSelezionata; 
+            }
+
+            const isFittizio = document.getElementById('chk-fittizio').checked;
+            const promoter_val = isFittizio ? null : (parseInt(document.getElementById('select-promoter').value) || null);
+
+            const payload = {
+                data_creazione: dataSelezionata,
+                promoter_id: promoter_val,
+                sede_id: parseInt(sedeScelta) || null,
+                cliente_nome: document.getElementById('input-cliente').value,
+                codice_fiscale: document.getElementById('input-cf').value.toUpperCase(),
+                cellulare: document.getElementById('input-cellulare').value,
+                pod_pdr: pod_pdr_combinato,
+                codice_carrello: document.getElementById('input-carrello').value,
+                note: document.getElementById('input-note').value,
+                luce: document.getElementById('chk-luce').checked,
+                gas: document.getElementById('chk-gas').checked,
+                dual_attivato: document.getElementById('chk-dual').checked,
+                fibra: document.getElementById('chk-fibra').checked,
+                polizza: document.getElementById('chk-polizza').checked,
+                iban: document.getElementById('chk-iban').checked,
+                bollettino: document.getElementById('chk-bollettino').checked,
+                fittizio: isFittizio,
+                ko_non_conta: document.getElementById('chk-ko').checked
+            };
+
+            let error = null;
+
+            if (idContrattoInModifica) {
+                const res = await db.from('contratti').update(payload).eq('id', idContrattoInModifica);
+                error = res.error;
+            } else {
+                const res = await db.from('contratti').insert([payload]);
+                error = res.error;
+            }
+
+            if (error) {
+                msg.textContent = "Errore: " + error.message; msg.className = "text-center mt-3 font-semibold text-red-600";
+                btn.disabled = false; btn.textContent = idContrattoInModifica ? "Aggiorna Contratto" : "Salva Contratto";
+            } else {
+                msg.textContent = idContrattoInModifica ? "✅ Contratto aggiornato!" : "✅ Contratto registrato!"; 
+                msg.className = "text-center mt-3 font-semibold text-green-600";
+                
+                setTimeout(() => {
+                    msg.textContent = "";
+                    if (idContrattoInModifica) {
+                        chiudiModalModifica(); 
+                        caricaRegistro(); 
+                    } else {
+                        resettaForm();
+                        aggiornaDashboardHome();
+                    }
+                }, 1500); 
+            }
+        }
+
+        async function caricaRegistro() {
+            document.getElementById('tabella-registro').innerHTML = '<tr><td colspan="7" class="text-center p-4">Caricamento in corso...</td></tr>';
+
+            const { data, error } = await db.from('contratti').select(`*, promoter (nome, cognome), sedi (nome)`).order('data_creazione', { ascending: false });
+            if (error) {
+                document.getElementById('tabella-registro').innerHTML = `<tr><td colspan="7" class="text-center p-4 text-red-600">Errore: ${error.message}</td></tr>`;
+                return;
+            }
+
+            tuttiIContratti = data;
+            applicaFiltri();
+        }
+
+        function applicaFiltri() {
+            const ricerca = document.getElementById('filtro-ricerca').value.toLowerCase();
+            const promoterId = document.getElementById('filtro-promoter').value;
+            const sedeId = document.getElementById('filtro-sede').value;
+            const dataDa = document.getElementById('filtro-data-da').value;
+            const dataA = document.getElementById('filtro-data-a').value;
+
+            contrattiFiltrati = tuttiIContratti.filter(c => {
+                let matchRicerca = true;
+                if (ricerca) {
+                    const nome = (c.cliente_nome || '').toLowerCase();
+                    const cf = (c.codice_fiscale || '').toLowerCase();
+                    const su = (c.codice_carrello || '').toLowerCase();
+                    matchRicerca = nome.includes(ricerca) || cf.includes(ricerca) || su.includes(ricerca);
+                }
+
+                let matchPromoter = true;
+                if (promoterId) matchPromoter = c.promoter_id == promoterId;
+
+                let matchSede = true;
+                if (sedeId) matchSede = c.sede_id == sedeId;
+
+                let matchData = true;
+                if (dataDa || dataA) {
+                    const dataContratto = c.data_creazione.split('T')[0];
+                    if (dataDa && dataContratto < dataDa) matchData = false;
+                    if (dataA && dataContratto > dataA) matchData = false;
+                }
+
+                return matchRicerca && matchPromoter && matchSede && matchData;
+            });
+
+            paginaCorrente = 1;
+            renderTabella();
+        }
+
+        function resettaFiltri() {
+            document.getElementById('filtro-ricerca').value = '';
+            document.getElementById('filtro-promoter').value = '';
+            document.getElementById('filtro-sede').value = '';
+            document.getElementById('filtro-data-da').value = '';
+            document.getElementById('filtro-data-a').value = '';
+            applicaFiltri();
+        }
+
+        function cambiaElementiPerPagina() {
+            const val = parseInt(document.getElementById('select-per-pagina').value);
+            contrattiPerPagina = val;
+            paginaCorrente = 1;
+            renderTabella();
+        }
+
+        function renderTabella() {
+            const tbody = document.getElementById('tabella-registro');
+            tbody.innerHTML = '';
+
+            const inizio = (paginaCorrente - 1) * contrattiPerPagina;
+            const fine = inizio + contrattiPerPagina;
+            const paginaDati = contrattiFiltrati.slice(inizio, fine);
+
+            if (paginaDati.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="7" class="text-center p-4">Nessun contratto trovato.</td></tr>';
+            } else {
+                paginaDati.forEach(c => {
+                    let badgeStato = '<span class="px-2 py-1 bg-green-100 text-green-800 rounded font-bold text-xs">CHIUSO</span>';
+                    if (c.ko_non_conta) badgeStato = '<span class="px-2 py-1 bg-red-100 text-red-800 rounded font-bold text-xs">KO</span>';
+                    else if (c.fittizio) badgeStato = '<span class="px-2 py-1 bg-gray-200 text-gray-800 rounded font-bold text-xs">FITTIZIO</span>';
+                    else if (!c.codice_carrello || c.codice_carrello.trim() === '') badgeStato = '<span class="px-2 py-1 bg-yellow-100 text-yellow-800 rounded font-bold text-xs">SOSPESO</span>';
+
+                    let fornit = [];
+                    if (c.luce) fornit.push('Luce');
+                    if (c.gas) fornit.push('Gas');
+                    if (c.dual_attivato) fornit.push('Dual');
+                    if (c.fibra) fornit.push('Fibra');
+                    if (c.polizza) fornit.push('Polizza');
+
+                    const dataFormat = new Date(c.data_creazione).toLocaleDateString('it-IT');
+                    const nomePromoter = c.promoter ? `${c.promoter.nome} ${c.promoter.cognome}` : (c.fittizio ? '<span class="text-gray-400 italic">Fittizio (Nessuno)</span>' : 'Sconosciuto');
+                    const nomeSede = c.sedi ? c.sedi.nome : '-';
+
+                    tbody.innerHTML += `
+                        <tr class="border-b hover:bg-gray-50">
+                            <td class="p-3 text-sm">${dataFormat}</td>
+                            <td class="p-3 text-sm">
+                                <span class="font-semibold text-gray-900">${nomePromoter}</span><br>
+                                <span class="text-xs text-blue-600 font-medium">${nomeSede}</span>
+                            </td>
+                            <td class="p-3 text-sm uppercase font-bold">${c.cliente_nome || '-'}</td>
+                            <td class="p-3 text-sm">${fornit.join(', ')}</td>
+                            <td class="p-3">
+                                <div class="flex items-center gap-1">
+                                    <input type="text" value="${c.codice_carrello || ''}" id="su-${c.id}" oninput="mostraSalvaSU(${c.id})" class="border rounded p-1 w-full text-sm bg-white" placeholder="SU...">
+                                    <button id="btn-su-${c.id}" onclick="aggiornaSU(${c.id})" class="hidden text-xs bg-blue-600 text-white px-2 py-1 rounded hover:bg-blue-700">Salva</button>
+                                </div>
+                            </td>
+                            <td class="p-3 text-center">${badgeStato}</td>
+                            <td class="p-3 text-center flex flex-col gap-1">
+                                <button onclick="apriDettagli(${c.id})" class="text-xs bg-gray-500 text-white px-2 py-1 rounded hover:bg-gray-600 w-full">Dettagli</button>
+                                <button onclick="apriModifica(${c.id})" class="text-xs bg-yellow-500 text-white px-2 py-1 rounded hover:bg-yellow-600 w-full">Modifica</button>
+                                <button onclick="eliminaContratto(${c.id})" class="text-xs bg-red-600 text-white px-2 py-1 rounded hover:bg-red-700 w-full">Elimina</button>
+                            </td>
+                        </tr>
+                    `;
+                });
+            }
+            aggiornaControlliPaginazione();
+        }
+
+        function mostraSalvaSU(id) {
+            document.getElementById(`btn-su-${id}`).classList.remove('hidden');
+        }
+
+        async function aggiornaSU(id_contratto) {
+            const nuovoSU = document.getElementById(`su-${id_contratto}`).value;
+            const { error } = await db.from('contratti').update({ codice_carrello: nuovoSU }).eq('id', id_contratto);
+            if (!error) {
+                document.getElementById(`btn-su-${id_contratto}`).classList.add('hidden');
+                const idx = tuttiIContratti.findIndex(c => c.id === id_contratto);
+                if(idx > -1) tuttiIContratti[idx].codice_carrello = nuovoSU;
+                applicaFiltri(); 
+            } else alert("Errore nel salvataggio del SU");
+        }
+
+        function aggiornaControlliPaginazione() {
+            const totale = contrattiFiltrati.length;
+            const totalePagine = Math.ceil(totale / contrattiPerPagina) || 1;
+            
+            let inizioContatore = (paginaCorrente - 1) * contrattiPerPagina + 1;
+            let fineContatore = Math.min(paginaCorrente * contrattiPerPagina, totale);
+            if (totale === 0) { inizioContatore = 0; fineContatore = 0; }
+
+            document.getElementById('info-pagina').innerHTML = `Visualizzati <span class="font-bold text-blue-600">${inizioContatore}-${fineContatore}</span> su <span class="font-bold text-blue-600">${totale}</span> totali`;
+            
+            document.getElementById('btn-prev').disabled = (paginaCorrente === 1);
+            document.getElementById('btn-next').disabled = (paginaCorrente === totalePagine);
+        }
+
+        function cambiaPagina(delta) {
+            paginaCorrente += delta;
+            renderTabella();
+        }
+
+        async function caricaGestioneListe() {
+            const tbodyP = document.getElementById('tabella-promoter-gestione');
+            const tbodyS = document.getElementById('tabella-sedi-gestione');
+            
+            tbodyP.innerHTML = '<tr><td colspan="3" class="p-3 text-center">Caricamento...</td></tr>';
+            tbodyS.innerHTML = '<tr><td colspan="2" class="p-3 text-center">Caricamento...</td></tr>';
+
+            const { data: promoters } = await db.from('promoter').select('*').order('attivo', { ascending: false }).order('cognome');
+            const { data: sedi } = await db.from('sedi').select('*').order('nome');
+
+            if (promoters) {
+                tbodyP.innerHTML = '';
+                promoters.forEach(p => {
+                    const statusBadge = p.attivo 
+                        ? '<span class="px-2 py-1 bg-green-100 text-green-800 rounded font-bold text-xs">Attivo</span>' 
+                        : '<span class="px-2 py-1 bg-red-100 text-red-800 rounded font-bold text-xs">Disattivato</span>';
+                    const actionBtn = p.attivo 
+                        ? `<button onclick="toggleStatoPromoter(${p.id}, false)" class="text-xs bg-red-600 hover:bg-red-700 text-white font-bold px-2 py-1 rounded">Elimina</button>` 
+                        : `<button onclick="toggleStatoPromoter(${p.id}, true)" class="text-xs bg-green-600 hover:bg-green-700 text-white font-bold px-2 py-1 rounded">Ripristina</button>`;
+                    
+                    tbodyP.innerHTML += `
+                        <tr class="border-b hover:bg-gray-50">
+                            <td class="p-2 text-sm font-semibold">${p.nome} ${p.cognome}</td>
+                            <td class="p-2 text-center">${statusBadge}</td>
+                            <td class="p-2 text-center">${actionBtn}</td>
+                        </tr>
+                    `;
+                });
+            }
+
+            if (sedi) {
+                tbodyS.innerHTML = '';
+                sedi.forEach(s => {
+                    tbodyS.innerHTML += `
+                        <tr class="border-b hover:bg-gray-50">
+                            <td class="p-2 text-sm font-semibold">${s.nome}</td>
+                            <td class="p-2 text-center">
+                                <button onclick="eliminaSede(${s.id})" class="text-xs bg-red-600 hover:bg-red-700 text-white font-bold px-3 py-1 rounded">Elimina</button>
+                            </td>
+                        </tr>
+                    `;
+                });
+            }
+        }
+
+        async function aggiungiPromoter(e) {
+            e.preventDefault();
+            const nome = document.getElementById('nuovo-p-nome').value.trim();
+            const cognome = document.getElementById('nuovo-p-cognome').value.trim();
+            if(!nome || !cognome) return;
+
+            await db.from('promoter').insert([{ nome, cognome, attivo: true }]);
+            document.getElementById('form-nuovo-promoter').reset();
+            await caricaDatiForm();
+            caricaGestioneListe();
+        }
+
+        async function toggleStatoPromoter(id, stato) {
+            await db.from('promoter').update({ attivo: stato }).eq('id', id);
+            await caricaDatiForm();
+            caricaGestioneListe();
+        }
+
+        async function aggiungiSede(e) {
+            e.preventDefault();
+            const nome = document.getElementById('nuovo-s-nome').value.trim();
+            if(!nome) return;
+
+            await db.from('sedi').insert([{ nome }]);
+            document.getElementById('form-nuova-sede').reset();
+            await caricaDatiForm();
+            caricaGestioneListe();
+        }
+
+        async function eliminaSede(id) {
+            if(!confirm("Confermi di voler eliminare questa sede?")) return;
+            const { error } = await db.from('sedi').delete().eq('id', id);
+            if(error) alert("Impossibile eliminare: ci sono contratti collegati a questa sede!");
+            else {
+                await caricaDatiForm();
+                caricaGestioneListe();
+            }
+        }
+
+        // ---------- SCHEDA STATISTICHE ----------
+        async function caricaStatistiche() {
+            // FIX BUG 2: Selezioniamo anche la colonna "attivo" per capire correttamente se è licenziato o meno
+            const { data: contratti, error: errC } = await db.from('contratti').select(`*, promoter (id, nome, cognome, attivo), sedi (id, nome)`);
+            const { data: promoters, error: errP } = await db.from('promoter').select('*');
+            if (errC || errP) { alert("Errore nel caricamento delle statistiche"); return; }
+            
+            calcolaERenderizzaStatistiche(contratti, promoters);
+        }
+
+        function calcolaERenderizzaStatistiche(contratti, listaPromoters) {
+            const dataDa = document.getElementById('stat-data-da').value;
+            const dataA = document.getElementById('stat-data-a').value;
+            const statPromoterId = document.getElementById('stat-filtro-promoter').value;
+            const statSedeId = document.getElementById('stat-filtro-sede').value;
+
+            const filtrati = contratti.filter(c => {
+                if (statSedeId && c.sede_id != statSedeId) return false;
+                if (statPromoterId && c.promoter_id != statPromoterId) return false;
+                
+                if (dataDa || dataA) {
+                    const dataContratto = c.data_creazione.split('T')[0];
+                    if (dataDa && dataContratto < dataDa) return false;
+                    if (dataA && dataContratto > dataA) return false;
+                }
+                return true;
+            });
+
+            let totalePratiche = filtrati.length;
+            let sospesi = 0;
+            let ko = 0;
+            let fittizi = 0;
+            let luce = 0, gas = 0, dual = 0, fibra = 0, polizze = 0;
+
+            const statsPromoter = {};
+            const statsSedi = {};
+
+            // Seleziona se pre-compilare con i "veri zeri" solo nel Mese Corrente
+            if (modalitaPeriodoAttiva === 'mese') {
+                listaPromoters.forEach(p => {
+                    if (p.attivo) {
+                        if (statPromoterId && p.id != statPromoterId) return;
+                        statsPromoter[p.id] = { 
+                            nome: `${p.nome} ${p.cognome}`, 
+                            totale: 0, chiusi: 0, sospesi: 0, ko: 0, luce: 0, gas: 0, dual: 0, fibra: 0, polizza: 0 
+                        };
+                    }
+                });
+            }
+
+            filtrati.forEach(c => {
+                const isKo = c.ko_non_conta;
+                const isFittizio = c.fittizio;
+                const isSospeso = !isKo && !isFittizio && (!c.codice_carrello || c.codice_carrello.trim() === '');
+                const isChiuso = !isKo && !isFittizio && !isSospeso;
+
+                if (isKo) ko++;
+                else if (isFittizio) fittizi++;
+                else if (isSospeso) sospesi++;
+
+                if (c.luce) luce++;
+                if (c.gas) gas++;
+                if (c.dual_attivato) dual++;
+                if (c.fibra) fibra++;
+                if (c.polizza) polizze++;
+
+                if (!isFittizio) {
+                    const pId = c.promoter_id || 0;
+                    if (pId !== 0) {
+                        if (!statsPromoter[pId]) {
+                            // Se il promoter non era pre-compilato, lo aggiungiamo. Determiniamo lo stato di attivazione dal contratto.
+                            let isAttivo = true;
+                            if (c.promoter && c.promoter.attivo === false) {
+                                isAttivo = false;
+                            }
+                            const pNome = c.promoter ? `${c.promoter.nome} ${c.promoter.cognome}` : 'Sconosciuto';
+                            const etichetta = isAttivo ? pNome : `${pNome} (Disattivato)`;
+                            statsPromoter[pId] = { nome: etichetta, totale: 0, chiusi: 0, sospesi: 0, ko: 0, luce: 0, gas: 0, dual: 0, fibra: 0, polizza: 0 };
+                        }
+                        statsPromoter[pId].totale++;
+                        if (isChiuso) statsPromoter[pId].chiusi++;
+                        if (isSospeso) statsPromoter[pId].sospesi++;
+                        if (isKo) statsPromoter[pId].ko++;
+                        if (c.luce) statsPromoter[pId].luce++;
+                        if (c.gas) statsPromoter[pId].gas++;
+                        if (c.dual_attivato) statsPromoter[pId].dual++;
+                        if (c.fibra) statsPromoter[pId].fibra++;
+                        if (c.polizza) statsPromoter[pId].polizza++;
+                    } else {
+                        if (!statsPromoter[0]) {
+                            statsPromoter[0] = { nome: 'Promoter Non Assegnato', totale: 0, chiusi: 0, sospesi: 0, ko: 0, luce: 0, gas: 0, dual: 0, fibra: 0, polizza: 0 };
+                        }
+                        statsPromoter[0].totale++;
+                        if (isChiuso) statsPromoter[0].chiusi++;
+                        if (isSospeso) statsPromoter[0].sospesi++;
+                        if (isKo) statsPromoter[0].ko++;
+                        if (c.luce) statsPromoter[0].luce++;
+                        if (c.gas) statsPromoter[0].gas++;
+                        if (c.dual_attivato) statsPromoter[0].dual++;
+                        if (c.fibra) statsPromoter[0].fibra++;
+                        if (c.polizza) statsPromoter[0].polizza++;
+                    }
+                }
+
+                const sNome = c.sedi ? c.sedi.nome : 'Sede Non Assegnata';
+                if (!statsSedi[sNome]) statsSedi[sNome] = { totale: 0, chiusi: 0 };
+                statsSedi[sNome].totale++;
+                if (isChiuso) statsSedi[sNome].chiusi++;
+            });
+
+            const chiusiReali = totalePratiche - (sospesi + ko + fittizi);
+
+            document.getElementById('stat-totale-pratiche').textContent = totalePratiche;
+            document.getElementById('stat-chiusi-reali').textContent = chiusiReali;
+            document.getElementById('stat-sospesi').textContent = sospesi;
+            document.getElementById('stat-ko').textContent = ko;
+            document.getElementById('stat-fittizi').textContent = fittizi;
+
+            const arrayPromoters = Object.values(statsPromoter).sort((a, b) => {
+                if (a.nome === 'Promoter Non Assegnato') return 1;
+                if (b.nome === 'Promoter Non Assegnato') return -1;
+                return a.nome.localeCompare(b.nome);
+            });
+
+            const tbodyP = document.getElementById('stat-tabella-promoter');
+            tbodyP.innerHTML = '';
+            
+            if (arrayPromoters.length === 0) {
+                tbodyP.innerHTML = '<tr><td colspan="6" class="p-4 text-center text-gray-500 italic">Nessun promoter ha registrato contratti nel periodo selezionato.</td></tr>';
+            } else {
+                arrayPromoters.forEach(sp => {
+                    tbodyP.innerHTML += `
+                        <tr class="border-b hover:bg-gray-50 text-sm">
+                            <td class="p-3 font-bold text-gray-800">${sp.nome}</td>
+                            <td class="p-3 text-center font-bold text-blue-600">${sp.totale}</td>
+                            <td class="p-3 text-center font-bold text-green-600 bg-green-50">${sp.chiusi}</td>
+                            <td class="p-3 text-center text-yellow-700">${sp.sospesi}</td>
+                            <td class="p-3 text-center text-red-600">${sp.ko}</td>
+                            <td class="p-3 text-center text-xs text-gray-600">${sp.luce} / ${sp.gas} / ${sp.dual} / ${sp.fibra} / ${sp.polizza}</td>
+                        </tr>
+                    `;
+                });
+            }
+
+            const boxFornit = document.getElementById('stat-box-forniture');
+            boxFornit.innerHTML = `
+                <div class="flex justify-between border-b pb-1 items-center"><span>Luce:</span><span class="font-bold">${luce}</span></div>
+                <div class="flex justify-between border-b pb-1 items-center"><span>Gas:</span><span class="font-bold">${gas}</span></div>
+                <div class="flex justify-between border-b pb-1 items-center">
+                    <span>DUAL <span class="text-[10px] text-gray-500 font-normal ml-1">(1 Luce + 1 Gas)</span>:</span>
+                    <span class="font-bold">${dual}</span>
+                </div>
+                <div class="flex justify-between border-b pb-1 items-center"><span>Fibra:</span><span class="font-bold">${fibra}</span></div>
+                <div class="flex justify-between pb-1 items-center"><span>Polizza:</span><span class="font-bold">${polizze}</span></div>
+            `;
+
+            const boxSedi = document.getElementById('stat-box-sedi');
+            boxSedi.innerHTML = '';
+            for (let s in statsSedi) {
+                boxSedi.innerHTML += `
+                    <div class="flex justify-between border-b pb-1">
+                        <span>${s}:</span>
+                        <span><strong class="text-green-600">${statsSedi[s].chiusi} chiusi</strong> / ${statsSedi[s].totale} tot</span>
+                    </div>
+                `;
+            }
+        }
+
+        function impostaPeriodoStat(tipo) {
+            modalitaPeriodoAttiva = tipo;
+            
+            const dataDa = document.getElementById('stat-data-da');
+            const dataA = document.getElementById('stat-data-a');
+            
+            const btnOggi = document.getElementById('btn-stat-oggi');
+            const btnMese = document.getElementById('btn-stat-mese');
+            const btnTutto = document.getElementById('btn-stat-tutto');
+
+            const classActive = "px-3 py-1 bg-blue-600 text-white shadow hover:bg-blue-700 rounded font-bold text-xs";
+            const classInactive = "px-3 py-1 bg-gray-200 text-gray-700 hover:bg-gray-300 rounded font-bold text-xs";
+
+            btnOggi.className = classInactive;
+            btnMese.className = classInactive;
+            btnTutto.className = classInactive;
+
+            if (tipo === 'oggi') {
+                const oggi = new Date();
+                const y = oggi.getFullYear();
+                const m = String(oggi.getMonth() + 1).padStart(2, '0');
+                const d = String(oggi.getDate()).padStart(2, '0');
+                const strOggi = `${y}-${m}-${d}`;
+                
+                dataDa.value = strOggi;
+                dataA.value = strOggi;
+                btnOggi.className = classActive;
+            } else if (tipo === 'mese') {
+                const oggi = new Date();
+                const y = oggi.getFullYear();
+                const m = String(oggi.getMonth() + 1).padStart(2, '0');
+                const dUltimo = new Date(y, oggi.getMonth() + 1, 0).getDate();
+                
+                dataDa.value = `${y}-${m}-01`;
+                dataA.value = `${y}-${m}-${String(dUltimo).padStart(2, '0')}`;
+                btnMese.className = classActive;
+            } else if (tipo === 'tutto') {
+                dataDa.value = '';
+                dataA.value = '';
+                btnTutto.className = classActive;
+            } else if (tipo === 'custom') {
+                btnOggi.className = classInactive;
+                btnMese.className = classInactive;
+                btnTutto.className = classInactive;
+            }
+
+            caricaStatistiche();
+        }
+
+        function inizializzaSelettoriCF() {
+            const selGiorno = document.getElementById('cf-giorno');
+            const selMese = document.getElementById('cf-mese');
+            const selAnno = document.getElementById('cf-anno');
+
+            if (selGiorno.options.length <= 1) {
+                for (let g = 1; g <= 31; g++) {
+                    const val = g < 10 ? '0' + g : g;
+                    selGiorno.innerHTML += `<option value="${val}">${g}</option>`;
+                }
+            }
+
+            if (selMese.options.length <= 1) {
+                const mesi = ["Gennaio", "Febbraio", "Marzo", "Aprile", "Maggio", "Giugno", "Luglio", "Agosto", "Settembre", "Ottobre", "Novembre", "Dicembre"];
+                mesi.forEach((m, idx) => {
+                    const val = idx < 9 ? '0' + (idx + 1) : (idx + 1);
+                    selMese.innerHTML += `<option value="${val}">${m}</option>`;
+                });
+            }
+
+            if (selAnno.options.length <= 1) {
+                const annoAttuale = 2026;
+                for (let a = annoAttuale; a >= 1920; a--) {
+                    selAnno.innerHTML += `<option value="${a}">${a}</option>`;
+                }
+            }
+
+            const datalist = document.getElementById('lista-comuni');
+            datalist.innerHTML = '';
+            for (let com in databaseComuni) {
+                datalist.innerHTML += `<option value="${com}">`;
+            }
+        }
+
+        function impostaSessoCF(sesso) {
+            sessoSelezionatoCF = sesso;
+            const btnM = document.getElementById('btn-sesso-m');
+            const btnF = document.getElementById('btn-sesso-f');
+            if (sesso === 'M') {
+                btnM.className = "w-full py-2 bg-[#0d6854] text-white font-bold rounded shadow transition";
+                btnF.className = "w-full py-2 bg-[#ededed] text-gray-700 font-semibold rounded border border-gray-300 hover:bg-gray-200 transition";
+            } else {
+                btnF.className = "w-full py-2 bg-[#0d6854] text-white font-bold rounded shadow transition";
+                btnM.className = "w-full py-2 bg-[#ededed] text-gray-700 font-semibold rounded border border-gray-300 hover:bg-gray-200 transition";
+            }
+        }
+
+        function estraiConsonanti(str) { return str.toUpperCase().replace(/[^A-Z]/g, '').replace(/[AEIOU]/g, ''); }
+        function estraiVocali(str) { return str.toUpperCase().replace(/[^A-Z]/g, '').replace(/[^AEIOU]/g, ''); }
+
+        function codificaCognome(cognome) {
+            let cons = estraiConsonanti(cognome);
+            let voc = estraiVocali(cognome);
+            let res = cons + voc + "XXX";
+            return res.substring(0, 3);
+        }
+
+        function codificaNome(nome) {
+            let cons = estraiConsonanti(nome);
+            let voc = estraiVocali(nome);
+            if (cons.length >= 4) {
+                return cons[0] + cons[2] + cons[3];
+            }
+            let res = cons + voc + "XXX";
+            return res.substring(0, 3);
+        }
+
+        function codificaDataSesso(giorno, mese, anno, sesso) {
+            const annoStr = anno.toString().substring(2, 4);
+            const codiciMese = ['A','B','C','D','E','H','L','M','P','R','S','T'];
+            const meseCod = codiciMese[parseInt(mese, 10) - 1];
+            let g = parseInt(giorno, 10);
+            if (sesso === 'F') g += 40;
+            const giornoStr = g < 10 ? '0' + g : g.toString();
+            return annoStr + meseCod + giornoStr;
+        }
+
+        function calcolaCarattereControllo(cf15) {
+            const dispari = {
+                '0':1, '1':0, '2':5, '3':7, '4':9, '5':13, '6':15, '7':17, '8':19, '9':21,
+                'A':1, 'B':0, 'C':5, 'D':7, 'E':9, 'F':13, 'G':15, 'H':17, 'I':19, 'J':21,
+                'K':2, 'L':4, 'M':18, 'N':20, 'O':11, 'P':3, 'Q':6, 'R':8, 'S':12, 'T':14,
+                'U':16, 'V':10, 'W':22, 'X':25, 'Y':24, 'Z':23
+            };
+            const pari = {
+                '0':0, '1':1, '2':2, '3':3, '4':4, '5':5, '6':6, '7':7, '8':8, '9':9,
+                'A':0, 'B':1, 'C':2, 'D':3, 'E':4, 'F':5, 'G':6, 'H':7, 'I':8, 'J':9,
+                'K':10, 'L':11, 'M':12, 'N':13, 'O':14, 'P':15, 'Q':16, 'R':17, 'S':18, 'T':19,
+                'U':20, 'V':21, 'W':22, 'X':23, 'Y':24, 'Z':25
+            };
+            let somma = 0;
+            for(let i = 0; i < 15; i++) {
+                const c = cf15[i];
+                if ((i + 1) % 2 === 1) somma += dispari[c] || 0;
+                else somma += pari[c] || 0;
+            }
+            const lettere = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+            return lettere[somma % 26];
+        }
+
+        function eseguiCalcoloCF(e) {
+            e.preventDefault();
+            const cognome = document.getElementById('cf-cognome').value.trim();
+            const nome = document.getElementById('cf-nome').value.trim();
+            const giorno = document.getElementById('cf-giorno').value;
+            const mese = document.getElementById('cf-mese').value;
+            const anno = document.getElementById('cf-anno').value;
+            const luogoRaw = document.getElementById('cf-luogo').value.trim().toUpperCase();
+
+            if(!cognome || !nome || !giorno || !mese || !anno || !luogoRaw) {
+                alert("Compila tutti i campi richiesti!");
+                return;
+            }
+
+            let codiceCatastale = databaseComuni[luogoRaw];
+            if (!codiceCatastale) {
+                if (luogoRaw.length === 4) codiceCatastale = luogoRaw;
+                else {
+                    alert("Comune non trovato nel database rapido. Se conosci il codice catastale a 4 caratteri (es. C351), digitalo direttamente nel campo Luogo di Nascita!");
+                    return;
+                }
+            }
+
+            const cCognome = codificaCognome(cognome);
+            const cNome = codificaNome(nome);
+            const cData = codificaDataSesso(giorno, mese, anno, sessoSelezionatoCF);
+            const parziale = (cCognome + cNome + cData + codiceCatastale).toUpperCase();
+
+            const check = calcolaCarattereControllo(parziale);
+            const cfCompleto = parziale + check;
+
+            document.getElementById('risultato-cf').textContent = cfCompleto;
+            document.getElementById('box-risultato-cf').classList.remove('hidden');
+        }
+
+        function copiaCF() {
+            const cf = document.getElementById('risultato-cf').textContent;
+            navigator.clipboard.writeText(cf);
+            alert("Codice Fiscale copiato negli appunti!");
+        }
+
+        function usaCFNelContratto() {
+            const cf = document.getElementById('risultato-cf').textContent;
+            cambiaScheda('nuovo');
+            document.getElementById('input-cf').value = cf;
+        }
+
+        window.onload = function() {
+            caricaDatiForm().then(() => {
+                cambiaScheda('home');
+            });
+        };
+    </script>
+
+    <div class="max-w-7xl mx-auto mt-6 p-4 bg-white rounded-lg shadow-md">
+        
+        <div class="relative flex items-center justify-center mb-6">
+            <button onclick="cambiaScheda('home')" class="absolute left-0 px-4 py-2 bg-blue-100 hover:bg-blue-200 text-blue-800 rounded-full font-bold shadow-sm transition flex items-center gap-2">
+                🏠 <span class="hidden sm:inline">Home Dashboard</span>
+            </button>
+            <h1 class="text-3xl font-extrabold text-blue-600 tracking-wide text-center">⚡ Enel Stand Manager</h1>
+        </div>
+        
+        <div class="flex flex-wrap justify-center gap-3 mb-8 border-b pb-5">
+            <button id="btn-nav-nuovo" onclick="cambiaScheda('nuovo')" class="px-4 py-2 rounded-t font-semibold shadow-sm transition tab-inattivo">📝 Nuovo Contratto</button>
+            <button id="btn-nav-registro" onclick="cambiaScheda('registro')" class="px-4 py-2 rounded-t font-semibold shadow-sm transition tab-inattivo">📋 Registro</button>
+            <button id="btn-nav-statistiche" onclick="cambiaScheda('statistiche'); impostaPeriodoStat('tutto');" class="px-4 py-2 rounded-t font-semibold shadow-sm transition tab-inattivo">📊 Statistiche</button>
+            <button id="btn-nav-liste" onclick="cambiaScheda('liste')" class="px-4 py-2 rounded-t font-semibold shadow-sm transition tab-inattivo">⚙️ Gestione Liste</button>
+            <button id="btn-nav-calcola-cf" onclick="cambiaScheda('calcola-cf')" class="px-4 py-2 rounded-t font-semibold shadow-sm transition tab-inattivo">🧮 Calcola CF</button>
+        </div>
+
+        <!-- SCHEDA 0: HOME DASHBOARD -->
+        <div id="sez-home" class="hidden p-6 bg-white border border-gray-200 rounded shadow-sm text-center">
+            <h2 class="text-2xl font-bold text-blue-600 mb-2">Benvenuto in Enel Stand Manager</h2>
+            <p class="text-gray-500 mb-6">Seleziona la tua sede per iniziare e monitorare la giornata in tempo reale.</p>
+            
+            <div class="max-w-md mx-auto mb-8 bg-blue-50 p-4 rounded border border-blue-100">
+                <label class="block text-sm font-bold text-blue-800 mb-2">📍 La tua Sede</label>
+                <select id="home-select-sede" onchange="aggiornaDashboardHome()" class="w-full p-2 border rounded bg-white text-lg font-bold text-center"></select>
+            </div>
+
+            <h3 class="text-lg font-bold text-gray-700 mb-4">📈 Dashboard di Oggi (<span id="home-data-oggi"></span>)</h3>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div class="bg-blue-100 p-4 rounded border border-blue-200">
+                    <p class="text-xs font-bold text-blue-800 uppercase">Totale Pratiche</p>
+                    <p id="home-totale" class="text-2xl font-black text-blue-900 mt-1">0</p>
+                </div>
+                <div class="bg-green-100 p-4 rounded border border-green-200">
+                    <p class="text-xs font-bold text-green-800 uppercase">Chiusi Reali</p>
+                    <p id="home-chiusi" class="text-2xl font-black text-green-900 mt-1">0</p>
+                </div>
+                <div class="bg-yellow-100 p-4 rounded border border-yellow-200">
+                    <p class="text-xs font-bold text-yellow-800 uppercase">Sospesi</p>
+                    <p id="home-sospesi" class="text-2xl font-black text-yellow-900 mt-1">0</p>
+                </div>
+                <div class="bg-red-100 p-4 rounded border border-red-200">
+                    <p class="text-xs font-bold text-red-800 uppercase">KO</p>
+                    <p id="home-ko" class="text-2xl font-black text-red-900 mt-1">0</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- SCHEDA 1: NUOVO CONTRATTO -->
+        <div id="sez-nuovo" class="hidden p-6 bg-gray-50 border border-gray-200 rounded shadow-sm">
+            <div id="container-nuovo">
+                <div id="il-mio-form">
+                    <h2 id="titolo-form" class="text-xl font-bold mb-4 text-gray-700">Compila Nuovo Contratto</h2>
+                    <form id="form-contratto" onsubmit="salvaContratto(event)" class="space-y-6">
+                        
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 border-b pb-4">
+                            <div>
+                                <label class="block text-sm font-bold text-gray-700 text-blue-600">Data Contratto</label>
+                                <input type="date" id="input-data" required class="mt-1 w-full p-2 border-2 border-blue-400 rounded bg-white">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-bold text-gray-700">Promoter</label>
+                                <select id="select-promoter" class="mt-1 w-full p-2 border rounded bg-white"></select>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-bold text-gray-700">Sede</label>
+                                <select id="select-sede" onchange="memorizzaSedeSelezionataDaForm()" class="mt-1 w-full p-2 border rounded bg-white"></select>
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 border-b pb-4">
+                            <div>
+                                <label class="block text-sm font-bold text-gray-700">Nome e Cognome</label>
+                                <input type="text" id="input-cliente" class="mt-1 w-full p-2 border rounded bg-white">
+                                <div class="mt-2 flex items-center"><input type="checkbox" id="chk-fittizio" onchange="gestisciFittizio()"><label class="text-sm font-bold text-red-600">Inserimento Fittizio (Nessun Promoter)</label></div>
+                            </div>
+                            <div><label class="block text-sm font-bold text-gray-700">Codice Fiscale</label><input type="text" id="input-cf" maxlength="16" class="mt-1 w-full p-2 border rounded bg-white uppercase"></div>
+                            <div><label class="block text-sm font-bold text-gray-700">Cellulare</label><input type="text" id="input-cellulare" oninput="this.value = this.value.replace(/[^0-9]/g, '')" class="mt-1 w-full p-2 border rounded bg-white"></div>
+                        </div>
+
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-8 border-b pb-4">
+                            <div class="bg-white p-4 rounded border">
+                                <label class="block text-sm font-bold text-gray-700 mb-3">Forniture (Seleziona)</label>
+                                <div class="flex flex-wrap gap-4 items-center">
+                                    <label class="flex items-center"><input type="checkbox" id="chk-luce" onchange="aggiornaStatoCampi()"> Luce</label>
+                                    <label class="flex items-center"><input type="checkbox" id="chk-gas" onchange="aggiornaStatoCampi()"> Gas</label>
+                                    <label class="flex items-center text-blue-700 font-bold"><input type="checkbox" id="chk-dual" onchange="aggiornaStatoCampi()"> DUAL</label>
+                                    <label class="flex items-center"><input type="checkbox" id="chk-fibra"> Fibra</label>
+                                    <label class="flex items-center ml-4 border-l pl-4"><input type="checkbox" id="chk-polizza"> Polizza</label>
+                                </div>
+                            </div>
+                            <div class="bg-white p-4 rounded border">
+                                <label class="block text-sm font-bold text-gray-700 mb-3">Metodo di Pagamento</label>
+                                <div class="flex flex-wrap gap-4 items-center">
+                                    <label class="flex items-center"><input type="checkbox" id="chk-iban"> IBAN</label>
+                                    <label class="flex items-center"><input type="checkbox" id="chk-bollettino"> Bollettino</label>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <div class="grid grid-cols-2 gap-2">
+                                <div><label class="block text-sm font-bold text-gray-700">POD (Luce)</label><input type="text" id="input-pod" disabled class="mt-1 w-full p-2 border rounded bg-gray-200 uppercase transition-colors"></div>
+                                <div><label class="block text-sm font-bold text-gray-700">PDR (Gas)</label><input type="text" id="input-pdr" disabled class="mt-1 w-full p-2 border rounded bg-gray-200 uppercase transition-colors"></div>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-bold text-gray-700">Codice Carrello / SU</label>
+                                <input type="text" id="input-carrello" class="mt-1 w-full p-2 border rounded bg-white">
+                                <span class="text-xs text-gray-500">Se lasciato vuoto = Sospeso</span>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-bold text-gray-700">Stato KO</label>
+                                <div class="mt-3 flex items-center"><input type="checkbox" id="chk-ko"><label class="font-bold text-red-600">KO / NON SI CONTA</label></div>
+                            </div>
+                        </div>
+
+                        <div><label class="block text-sm font-bold text-gray-700">Note <span class="font-normal text-gray-500 text-xs">(opzionale)</span></label><textarea id="input-note" rows="2" class="mt-1 w-full p-2 border rounded bg-white"></textarea></div>
+
+                        <div class="flex gap-4">
+                            <button type="submit" id="btn-salva" class="w-full py-4 bg-blue-600 hover:bg-blue-700 text-white text-lg font-bold rounded shadow transition">Salva Contratto</button>
+                            <button type="button" id="btn-annulla-nuovo" onclick="annullaNuovo()" class="w-1/3 py-4 bg-red-600 hover:bg-red-700 text-white text-lg font-bold rounded shadow transition">Annulla Inserimento</button>
+                            <button type="button" id="btn-annulla-modifica" onclick="chiudiModalModifica()" class="hidden w-1/3 py-4 bg-red-600 hover:bg-red-700 text-white text-lg font-bold rounded shadow transition">Annulla Modifica</button>
+                        </div>
+                        <p id="messaggio-esito" class="text-center mt-3"></p>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- SCHEDA 2: REGISTRO -->
+        <div id="sez-registro" class="hidden p-4 bg-white border border-gray-200 rounded shadow-sm">
+            <div class="mb-6 p-4 bg-blue-50 rounded border border-blue-100">
+                <h3 class="text-sm font-bold text-blue-800 mb-3">🔍 Filtra Contratti</h3>
+                <div class="grid grid-cols-1 md:grid-cols-5 gap-4">
+                    <div>
+                        <label class="block text-xs font-bold text-gray-700">Cerca (SU, CF, Nome)</label>
+                        <input type="text" id="filtro-ricerca" onkeyup="applicaFiltri()" class="mt-1 w-full p-2 border rounded bg-white" placeholder="Cerca...">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-gray-700">Promoter</label>
+                        <select id="filtro-promoter" onchange="applicaFiltri()" class="mt-1 w-full p-2 border rounded bg-white"></select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-gray-700">Sede</label>
+                        <select id="filtro-sede" onchange="applicaFiltri()" class="mt-1 w-full p-2 border rounded bg-white"></select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-gray-700">Da Data</label>
+                        <input type="date" id="filtro-data-da" onchange="applicaFiltri()" class="mt-1 w-full p-2 border rounded bg-white">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-gray-700">A Data</label>
+                        <input type="date" id="filtro-data-a" onchange="applicaFiltri()" class="mt-1 w-full p-2 border rounded bg-white">
+                    </div>
+                </div>
+                <div class="mt-3 text-right">
+                    <button onclick="resettaFiltri()" class="text-sm bg-gray-300 px-3 py-1 rounded hover:bg-gray-400 font-semibold">Resetta Filtri</button>
+                </div>
+            </div>
+
+            <h2 class="text-xl font-bold mb-4 text-gray-700">Registro Pratiche</h2>
+            <div class="overflow-x-auto">
+                <table class="w-full text-left border-collapse">
+                    <thead>
+                        <tr class="bg-gray-100 border-b">
+                            <th class="p-3 text-sm font-bold text-gray-700 w-24">Data</th>
+                            <th class="p-3 text-sm font-bold text-gray-700">Promoter & Sede</th>
+                            <th class="p-3 text-sm font-bold text-gray-700">Cliente</th>
+                            <th class="p-3 text-sm font-bold text-gray-700">Forniture</th>
+                            <th class="p-3 text-sm font-bold text-gray-700 w-48">Codice SU</th>
+                            <th class="p-3 text-sm font-bold text-gray-700 text-center">Stato</th>
+                            <th class="p-3 text-sm font-bold text-gray-700 text-center w-28">Azioni</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tabella-registro"></tbody>
+                </table>
+            </div>
+
+            <div class="flex justify-between items-center mt-4 pt-4 border-t">
+                <div class="flex items-center gap-2">
+                    <span class="text-sm font-bold text-gray-700">Elementi per pagina:</span>
+                    <select id="select-per-pagina" onchange="cambiaElementiPerPagina()" class="border rounded p-1 text-sm font-bold bg-white">
+                        <option value="10" selected>10</option>
+                        <option value="15">15</option>
+                        <option value="20">20</option>
+                        <option value="25">25</option>
+                        <option value="30">30</option>
+                        <option value="35">35</option>
+                        <option value="40">40</option>
+                        <option value="45">45</option>
+                        <option value="50">50</option>
+                    </select>
+                </div>
+                
+                <span id="info-pagina" class="text-sm text-gray-700"></span>
+                
+                <div class="flex gap-2">
+                    <button id="btn-prev" onclick="cambiaPagina(-1)" class="px-3 py-1 bg-gray-200 hover:bg-gray-300 rounded font-bold text-sm">⬅️ Precedente</button>
+                    <button id="btn-next" onclick="cambiaPagina(1)" class="px-3 py-1 bg-gray-200 hover:bg-gray-300 rounded font-bold text-sm">Successiva ➡️</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- SCHEDA 3: STATISTICHE -->
+        <div id="sez-statistiche" class="hidden p-6 bg-white border border-gray-200 rounded shadow-sm space-y-6">
+            
+            <div class="p-4 bg-blue-50 border border-blue-100 rounded">
+                <div class="flex flex-wrap justify-between items-center gap-4 border-b border-blue-200 pb-3 mb-3">
+                    <h2 class="text-xl font-bold text-gray-800">📊 Filtra Panoramica & Statistiche</h2>
+                    <div class="flex items-center gap-2">
+                        <button id="btn-stat-oggi" onclick="impostaPeriodoStat('oggi')" class="px-3 py-1 bg-gray-200 text-gray-700 hover:bg-gray-300 rounded font-bold text-xs">Oggi</button>
+                        <button id="btn-stat-mese" onclick="impostaPeriodoStat('mese')" class="px-3 py-1 bg-gray-200 text-gray-700 hover:bg-gray-300 rounded font-bold text-xs">Mese Corrente</button>
+                        <button id="btn-stat-tutto" onclick="impostaPeriodoStat('tutto')" class="px-3 py-1 bg-blue-600 text-white shadow hover:bg-blue-700 rounded font-bold text-xs">Tutto lo Storico</button>
+                    </div>
+                </div>
+                
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                    <div>
+                        <label class="block text-xs font-bold text-gray-700">Filtra per Sede</label>
+                        <select id="stat-filtro-sede" onchange="caricaStatistiche()" class="mt-1 w-full p-2 border rounded bg-white text-sm font-semibold"></select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-gray-700">Filtra per Promoter</label>
+                        <select id="stat-filtro-promoter" onchange="caricaStatistiche()" class="mt-1 w-full p-2 border rounded bg-white text-sm font-semibold"></select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-gray-700">Da Data</label>
+                        <input type="date" id="stat-data-da" onchange="impostaPeriodoStat('custom')" class="mt-1 w-full p-2 border rounded bg-white text-sm">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-gray-700">A Data</label>
+                        <input type="date" id="stat-data-a" onchange="impostaPeriodoStat('custom')" class="mt-1 w-full p-2 border rounded bg-white text-sm">
+                    </div>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-5 gap-4">
+                <div class="bg-blue-50 border border-blue-200 p-4 rounded text-center">
+                    <p class="text-xs font-bold text-blue-700 uppercase">Totale Pratiche</p>
+                    <p id="stat-totale-pratiche" class="text-3xl font-extrabold text-blue-900 mt-1">0</p>
+                </div>
+                <div class="bg-green-50 border-2 border-green-500 p-4 rounded flex flex-col justify-center text-center">
+                    <p class="text-xs font-bold text-green-700 uppercase">Contratti Chiusi Reali</p>
+                    <p id="stat-chiusi-reali" class="text-3xl font-extrabold text-green-700 mt-1">0</p>
+                </div>
+                <div class="bg-yellow-50 border border-yellow-200 p-4 rounded text-center">
+                    <p class="text-xs font-bold text-yellow-700 uppercase">Sospesi (Senza SU)</p>
+                    <p id="stat-sospesi" class="text-3xl font-extrabold text-yellow-800 mt-1">0</p>
+                </div>
+                <div class="bg-red-50 border border-red-200 p-4 rounded text-center">
+                    <p class="text-xs font-bold text-red-700 uppercase">KO / Non Conta</p>
+                    <p id="stat-ko" class="text-3xl font-extrabold text-red-800 mt-1">0</p>
+                </div>
+                <div class="bg-gray-100 border border-gray-300 p-4 rounded text-center">
+                    <p class="text-xs font-bold text-gray-700 uppercase">Fittizi</p>
+                    <p id="stat-fittizi" class="text-3xl font-extrabold text-gray-800 mt-1">0</p>
+                </div>
+            </div>
+
+            <div class="bg-gray-50 p-4 rounded border">
+                <h3 class="text-lg font-bold text-gray-800 mb-3">👥 Dettaglio Performance per Promoter</h3>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left bg-white border rounded">
+                        <thead class="bg-gray-100 border-b">
+                            <tr class="text-xs font-bold text-gray-700">
+                                <th class="p-3">Promoter</th>
+                                <th class="p-3 text-center">Totali</th>
+                                <th class="p-3 text-center bg-green-100 text-green-900">Chiusi Reali</th>
+                                <th class="p-3 text-center text-yellow-700">Sospesi</th>
+                                <th class="p-3 text-center text-red-700">KO</th>
+                                <th class="p-3 text-center cursor-help" title="LEGENDA MIX FORNITURE:&#10;L = Luce&#10;G = Gas&#10;D = Dual (1 Luce + 1 Gas)&#10;F = Fibra&#10;P = Polizza">
+                                    <span class="border-b border-dashed border-gray-500">Mix (L / G / D / F / P) ℹ️</span>
+                                </th>
+                            </tr>
+                        </thead>
+                        <tbody id="stat-tabella-promoter"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div class="bg-gray-50 p-4 rounded border">
+                    <h3 class="text-sm font-bold text-gray-700 mb-3 uppercase tracking-wider">📦 Ripartizione Forniture</h3>
+                    <div id="stat-box-forniture" class="space-y-2 text-sm text-gray-800"></div>
+                </div>
+                <div class="bg-gray-50 p-4 rounded border">
+                    <h3 class="text-sm font-bold text-gray-700 mb-3 uppercase tracking-wider">📍 Risultati per Sede</h3>
+                    <div id="stat-box-sedi" class="space-y-2 text-sm text-gray-800"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- SCHEDA 4: GESTIONE LISTE -->
+        <div id="sez-liste" class="hidden p-6 bg-white border border-gray-200 rounded shadow-sm">
+            <h2 class="text-2xl font-bold mb-6 text-gray-800 border-b pb-2">⚙️ Gestione Liste (Promoter e Sedi)</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                
+                <div class="bg-gray-50 p-4 rounded border">
+                    <h3 class="text-lg font-bold text-blue-700 mb-4">👥 Team Promoter</h3>
+                    <form id="form-nuovo-promoter" onsubmit="aggiungiPromoter(event)" class="mb-4 flex gap-2">
+                        <input type="text" id="nuovo-p-nome" placeholder="Nome" required class="w-1/2 p-2 border rounded bg-white text-sm">
+                        <input type="text" id="nuovo-p-cognome" placeholder="Cognome" required class="w-1/2 p-2 border rounded bg-white text-sm">
+                        <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-2 rounded text-sm whitespace-nowrap">+ Aggiungi</button>
+                    </form>
+                    <div class="overflow-x-auto max-h-80 overflow-y-auto">
+                        <table class="w-full text-left bg-white border rounded">
+                            <thead class="bg-gray-100 border-b">
+                                <tr>
+                                    <th class="p-2 text-xs font-bold text-gray-700">Promoter</th>
+                                    <th class="p-2 text-xs font-bold text-gray-700 text-center">Stato</th>
+                                    <th class="p-2 text-xs font-bold text-gray-700 text-center">Elimina</th>
+                                </tr>
+                            </thead>
+                            <tbody id="tabella-promoter-gestione"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="bg-gray-50 p-4 rounded border">
+                    <h3 class="text-lg font-bold text-blue-700 mb-4">📍 Sedi Stand</h3>
+                    <form id="form-nuova-sede" onsubmit="aggiungiSede(event)" class="mb-4 flex gap-2">
+                        <input type="text" id="nuovo-s-nome" placeholder="Nome Sede (es. Centro Sicilia)" required class="w-full p-2 border rounded bg-white text-sm">
+                        <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-2 rounded text-sm whitespace-nowrap">+ Aggiungi</button>
+                    </form>
+                    <div class="overflow-x-auto max-h-80 overflow-y-auto">
+                        <table class="w-full text-left bg-white border rounded">
+                            <thead class="bg-gray-100 border-b">
+                                <tr>
+                                    <th class="p-2 text-xs font-bold text-gray-700">Nome Sede</th>
+                                    <th class="p-2 text-xs font-bold text-gray-700 text-center">Elimina</th>
+                                </tr>
+                            </thead>
+                            <tbody id="tabella-sedi-gestione"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+        <!-- SCHEDA 5: CALCOLO CODICE FISCALE -->
+        <div id="sez-calcola-cf" class="hidden p-8 bg-white border border-gray-200 rounded shadow-sm max-w-3xl mx-auto">
+            <h2 class="text-xl font-bold mb-6 text-gray-800 border-b pb-2">🧮 Calcolo Codice Fiscale</h2>
+            
+            <form onsubmit="eseguiCalcoloCF(event)" class="space-y-4">
+                
+                <div class="grid grid-cols-1 md:grid-cols-4 items-center gap-4">
+                    <label class="cf-label md:col-span-1">COGNOME</label>
+                    <div class="md:col-span-3">
+                        <input type="text" id="cf-cognome" placeholder="Scrivi il cognome" required class="cf-input uppercase">
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-4 items-center gap-4">
+                    <label class="cf-label md:col-span-1">NOME</label>
+                    <div class="md:col-span-3">
+                        <input type="text" id="cf-nome" placeholder="Scrivi il nome" required class="cf-input uppercase">
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-4 items-center gap-4">
+                    <label class="cf-label md:col-span-1">DATA DI NASCITA</label>
+                    <div class="md:col-span-3 grid grid-cols-3 gap-2">
+                        <select id="cf-giorno" required class="cf-input">
+                            <option value="">Giorno</option>
+                        </select>
+                        <select id="cf-mese" required class="cf-input">
+                            <option value="">Mese</option>
+                        </select>
+                        <select id="cf-anno" required class="cf-input">
+                            <option value="">Anno</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-4 items-center gap-4">
+                    <label class="cf-label md:col-span-1">SESSO</label>
+                    <div class="md:col-span-3 grid grid-cols-2 gap-3">
+                        <button type="button" id="btn-sesso-m" onclick="impostaSessoCF('M')" class="w-full py-2 bg-[#0d6854] text-white font-bold rounded shadow transition">Maschile</button>
+                        <button type="button" id="btn-sesso-f" onclick="impostaSessoCF('F')" class="w-full py-2 bg-[#ededed] text-gray-700 font-semibold rounded border border-gray-300 hover:bg-gray-200 transition">Femminile</button>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-4 items-center gap-4">
+                    <label class="cf-label md:col-span-1">LUOGO DI NASCITA</label>
+                    <div class="md:col-span-3">
+                        <input type="text" id="cf-luogo" list="lista-comuni" placeholder="Scrivi il luogo o lo stato estero di nascita" required class="cf-input uppercase">
+                        <datalist id="lista-comuni"></datalist>
+                    </div>
+                </div>
+
+                <div class="pt-4">
+                    <button type="submit" class="w-full py-3 bg-[#0d6854] hover:bg-[#094d3e] text-white font-bold rounded shadow transition text-base">
+                        Calcola Codice Fiscale
+                    </button>
+                </div>
+            </form>
+
+            <div id="box-risultato-cf" class="hidden mt-6 p-4 bg-emerald-50 border-2 border-[#0d6854] rounded text-center">
+                <p class="text-xs text-gray-600 font-bold uppercase mb-1">Codice Fiscale Calcolato</p>
+                <p id="risultato-cf" class="text-2xl font-mono font-bold text-[#0d6854] tracking-wider mb-4"></p>
+                <div class="flex justify-center gap-3">
+                    <button onclick="copiaCF()" class="px-4 py-2 bg-gray-200 hover:bg-gray-300 font-bold text-sm rounded shadow">📋 Copia</button>
+                    <button onclick="usaCFNelContratto()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm rounded shadow">🚀 Inserisci nel Contratto</button>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- SOTTOFINESTRA MODIFICA -->
+    <div id="modal-modifica" class="hidden fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4">
+        <div class="bg-white rounded-lg shadow-xl w-full max-w-6xl max-h-[95vh] overflow-y-auto p-6 relative">
+            <button onclick="chiudiModalModifica()" class="absolute top-4 right-4 text-gray-500 hover:text-red-600 font-bold text-xl">X</button>
+            <div id="container-modal"></div>
+        </div>
+    </div>
+
+    <!-- SOTTOFINESTRA DETTAGLI -->
+    <div id="modal-dettagli" class="hidden fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4">
+        <div class="bg-white rounded-lg shadow-xl w-full max-w-md p-6 relative">
+            <button onclick="chiudiModalDettagli()" class="absolute top-4 right-4 text-gray-500 hover:text-red-600 font-bold text-xl">X</button>
+            <h3 class="text-lg font-bold text-blue-600 mb-4 border-b pb-2">Dettagli Contratto</h3>
+            <div id="dettagli-content" class="space-y-2 text-sm text-gray-800"></div>
+            <button onclick="chiudiModalDettagli()" class="mt-6 w-full py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold rounded">Chiudi</button>
+        </div>
+    </div>
+
+</body>
+</html>
