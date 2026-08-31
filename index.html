@@ -41,6 +41,19 @@
         let listaPromoterGlobale = [];
         let listaSediGlobale = [];
 
+        // Cache turni correnti e note
+        let cacheTurniSettimana = [];
+        let cacheDateSettimana = [];
+        let cacheNoteSettimana = [];
+
+        // Lista menu a tendina per orari personalizzati
+        const listaOrariPersonalizzati = [
+            "08:00-13:00", "08:30-13:30", "09:00-13:00", "09:00-14:00",
+            "09:30-14:30", "10:00-14:00", "10:00-16:00", "13:00-18:00", 
+            "14:00-19:00", "14:30-19:30", "15:00-20:00", "15:30-20:30", 
+            "16:00-21:00", "09:00-18:00", "10:00-19:00", "11:00-20:00"
+        ];
+
         const databaseComuni = {
             "CATANIA": "C351", "MISTERBIANCO": "F250", "ACIREALE": "A028", "PATERNÒ": "G371",
             "ADRANO": "A056", "BELPASSO": "A766", "BIANCAVILLA": "A841", "BRONTE": "B202",
@@ -982,7 +995,7 @@
         }
 
         // ==========================================
-        // GESTIONE TURNI SETTIMANALI (PROMOTER CENTRIC)
+        // GESTIONE TURNI SETTIMANALI (PROMOTER CENTRIC + COPERTURA)
         // ==========================================
         function getLunediSettimana(d) {
             const date = new Date(d);
@@ -996,6 +1009,27 @@
             const m = String(d.getMonth() + 1).padStart(2, '0');
             const day = String(d.getDate()).padStart(2, '0');
             return `${y}-${m}-${day}`;
+        }
+        
+        // Funzione per calcolare le ore da un formato come "10-15" o "15:00-20:30"
+        function calcolaOreTurno(orarioStr) {
+            if (!orarioStr || orarioStr === 'RIPOSO' || orarioStr === 'CUSTOM') return 0;
+            try {
+                let parts = orarioStr.split('-');
+                if(parts.length !== 2) return 0;
+                let start = parts[0].trim();
+                let end = parts[1].trim();
+
+                let parseTime = (t) => {
+                    let [h, m] = t.split(':');
+                    return parseInt(h) + (m ? parseInt(m)/60 : 0);
+                };
+                
+                let val = parseTime(end) - parseTime(start);
+                return val > 0 ? val : 0;
+            } catch(e) {
+                return 0;
+            }
         }
 
         function inizializzaTurni() {
@@ -1049,6 +1083,43 @@
             }
         }
 
+        function togglePannelloCopertura() {
+            const modal = document.getElementById('modal-copertura-turni');
+            if (modal.classList.contains('hidden')) {
+                renderizzaPannelloCopertura();
+                modal.classList.remove('hidden');
+            } else {
+                modal.classList.add('hidden');
+            }
+        }
+        
+        async function salvaNotaSettimanale(promoterId, settimanaStr) {
+            const notaVal = document.getElementById(`nota-${promoterId}`).value;
+            const payload = { promoter_id: promoterId, settimana: settimanaStr, nota: notaVal };
+            
+            const { error } = await db.from('note_settimanali').upsert(payload, { onConflict: 'promoter_id,settimana' });
+            const btn = document.getElementById(`btn-nota-${promoterId}`);
+            
+            if (error) {
+                btn.textContent = "Errore!";
+                btn.classList.replace('bg-blue-600', 'bg-red-600');
+            } else {
+                // Aggiorna cache
+                const idx = cacheNoteSettimana.findIndex(n => n.promoter_id == promoterId && n.settimana == settimanaStr);
+                if (idx > -1) cacheNoteSettimana[idx].nota = notaVal;
+                else cacheNoteSettimana.push(payload);
+                
+                btn.textContent = "✅ Salvato";
+                btn.classList.replace('bg-blue-600', 'bg-green-600');
+            }
+            
+            setTimeout(() => {
+                btn.textContent = "💾 Salva Nota";
+                btn.classList.remove('bg-green-600', 'bg-red-600');
+                btn.classList.add('bg-blue-600');
+            }, 2000);
+        }
+
         async function caricaTabellaTurni() {
             const container = document.getElementById('turni-griglia-container');
             container.innerHTML = '<p class="text-center p-8 text-gray-500 font-bold">Caricamento turni in corso...</p>';
@@ -1060,11 +1131,13 @@
             const strLunedi = formattaDataISO(lunedi);
             const strDomenica = formattaDataISO(domenica);
 
-            document.getElementById('turni-range-date').textContent = 
-                `${lunedi.toLocaleDateString('it-IT', { day: '2-digit', month: 'short' })} - ${domenica.toLocaleDateString('it-IT', { day: '2-digit', month: 'short', year: 'numeric' })}`;
+            const labelRange = `${lunedi.toLocaleDateString('it-IT', { day: '2-digit', month: 'short' })} - ${domenica.toLocaleDateString('it-IT', { day: '2-digit', month: 'short', year: 'numeric' })}`;
+            document.getElementById('turni-range-date').textContent = labelRange;
+            document.getElementById('copertura-range-date').textContent = labelRange;
 
+            // Fetch Turni
             const { data: turni, error } = await db.from('turni')
-                .select('*, sedi(nome)')
+                .select('*, sedi(nome), promoter(id, nome, cognome)')
                 .gte('data', strLunedi)
                 .lte('data', strDomenica);
 
@@ -1072,10 +1145,17 @@
                 container.innerHTML = `<p class="text-center p-8 text-red-600 font-bold">Errore caricamento turni: ${error.message}</p>`;
                 return;
             }
+            
+            // Fetch Note
+            const { data: note, errorNote } = await db.from('note_settimanali')
+                .select('*')
+                .eq('settimana', strLunedi);
+                
+            cacheTurniSettimana = turni || [];
+            cacheNoteSettimana = note || [];
 
-            // Mappa per accesso veloce: [promoter_id + "_" + data] => { sede_id, orario, nomeSede }
             const mappaTurni = {};
-            (turni || []).forEach(t => {
+            cacheTurniSettimana.forEach(t => {
                 const key = `${t.promoter_id}_${t.data}`;
                 mappaTurni[key] = {
                     sede_id: t.sede_id,
@@ -1085,11 +1165,11 @@
             });
 
             const giorniSettimana = ['Lunedì', 'Martedì', 'Mercoledì', 'Giovedì', 'Venerdì', 'Sabato', 'Domenica'];
-            const dateSettimana = [];
+            cacheDateSettimana = [];
             for (let i = 0; i < 7; i++) {
                 const d = new Date(lunedi);
                 d.setDate(d.getDate() + i);
-                dateSettimana.push({
+                cacheDateSettimana.push({
                     giornoNome: giorniSettimana[i],
                     dataStr: formattaDataISO(d),
                     dataLabel: d.toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit' })
@@ -1098,7 +1178,6 @@
 
             const promoterFiltroId = document.getElementById('turni-filtro-promoter').value;
 
-            // Filtro e ordinamento promoter attivi per riga
             let promotersMostrati = listaPromoterGlobale.filter(p => p.attivo);
             if (promoterFiltroId) {
                 promotersMostrati = listaPromoterGlobale.filter(p => p.id == promoterFiltroId);
@@ -1109,8 +1188,8 @@
                     <table class="w-full text-left border-collapse min-w-[1100px]">
                         <thead>
                             <tr class="bg-blue-600 text-white text-xs uppercase font-bold text-center">
-                                <th class="p-3 text-left w-52 border-r border-blue-500">Promoter</th>
-                                ${dateSettimana.map(d => `<th class="p-3 border-r border-blue-500 w-36">${d.giornoNome}<br><span class="text-[10px] text-blue-100 font-normal">${d.dataLabel}</span></th>`).join('')}
+                                <th class="p-3 text-left w-52 border-r border-blue-500">Promoter & Note</th>
+                                ${cacheDateSettimana.map(d => `<th class="p-3 border-r border-blue-500 w-36">${d.giornoNome}<br><span class="text-[10px] text-blue-100 font-normal">${d.dataLabel}</span></th>`).join('')}
                             </tr>
                         </thead>
                         <tbody class="text-xs">
@@ -1121,14 +1200,63 @@
             } else {
                 promotersMostrati.forEach((p, idx) => {
                     const bgRiga = idx % 2 === 0 ? 'bg-white' : 'bg-gray-50';
-                    html += `<tr class="border-b ${bgRiga} hover:bg-blue-50/40 transition">`;
-                    html += `
-                        <td class="p-3 font-bold text-gray-800 border-r align-middle bg-gray-100/60">
-                            <span class="text-sm">${p.cognome} ${p.nome}</span>
-                        </td>
-                    `;
+                    
+                    // Calcolo ore totali assegnate
+                    let oreTotaliSettimana = 0;
+                    cacheDateSettimana.forEach(d => {
+                        const key = `${p.id}_${d.dataStr}`;
+                        const turno = mappaTurni[key];
+                        if (turno) oreTotaliSettimana += calcolaOreTurno(turno.orario);
+                    });
+                    
+                    const notaTrovata = cacheNoteSettimana.find(n => n.promoter_id == p.id);
+                    const notaTesto = notaTrovata ? notaTrovata.nota : "";
 
-                    dateSettimana.forEach(d => {
+                    html += `<tr class="border-b ${bgRiga} hover:bg-blue-50/40 transition">`;
+                    
+                    // COLONNA PROMOTER - Differenziata per Vista Responsabile o Vista Promoter
+                    html += `<td class="p-3 border-r align-top bg-gray-100/60 min-w-[230px]">
+                                <div class="font-bold text-gray-800 text-sm mb-2">${p.cognome} ${p.nome}</div>`;
+
+                    if (modalitaModificaTurni) {
+                        let oreMancanti = 30 - oreTotaliSettimana;
+                        let badgeClass = oreTotaliSettimana >= 30 ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800";
+                        let labelOre = oreMancanti > 0 ? `Mancano ${oreMancanti}h al Target (30h)` : `+${Math.abs(oreMancanti)}h Extra`;
+                        
+                        html += `
+                            <div class="bg-white p-2 rounded shadow-sm border text-[11px] mb-2">
+                                <div class="flex justify-between mb-1">
+                                    <span>Ore assegnate:</span> <span class="font-bold">${oreTotaliSettimana}h</span>
+                                </div>
+                                <div class="flex justify-between items-center">
+                                    <span>Status:</span> <span class="px-1.5 py-0.5 rounded font-bold border ${badgeClass}">${labelOre}</span>
+                                </div>
+                            </div>
+                            <div class="flex flex-col gap-1 mt-2 border-t pt-2 border-gray-300">
+                                <label class="text-[10px] font-bold text-gray-600">Nota Settimanale (Es. ritardi, target):</label>
+                                <textarea id="nota-${p.id}" rows="2" class="w-full p-1.5 border border-blue-300 rounded text-[11px] bg-white outline-none focus:border-blue-600" placeholder="Scrivi una nota per questa settimana...">${notaTesto}</textarea>
+                                <button id="btn-nota-${p.id}" onclick="salvaNotaSettimanale(${p.id}, '${strLunedi}')" class="bg-blue-600 hover:bg-blue-700 text-white text-[10px] font-bold py-1.5 rounded transition shadow-sm">💾 Salva Nota</button>
+                            </div>
+                        `;
+                    } else {
+                        html += `
+                            <div class="bg-white p-2 rounded shadow-sm border text-[11px] mb-2 flex justify-between items-center">
+                                <span class="font-bold">Ore Settimanali Assegnate:</span> 
+                                <span class="text-sm font-black text-blue-700">${oreTotaliSettimana}h</span>
+                            </div>
+                        `;
+                        if (notaTesto) {
+                            html += `
+                                <div class="bg-yellow-50 border border-yellow-300 p-2 rounded text-[11px] text-gray-800 italic shadow-sm mt-2">
+                                    <strong class="text-yellow-700 not-italic block mb-1">📌 Comunicazione:</strong>
+                                    ${notaTesto.replace(/\n/g, '<br>')}
+                                </div>
+                            `;
+                        }
+                    }
+                    html += `</td>`;
+
+                    cacheDateSettimana.forEach(d => {
                         const key = `${p.id}_${d.dataStr}`;
                         const turno = mappaTurni[key] || null;
 
@@ -1138,6 +1266,15 @@
                             const sedeAttuale = turno ? turno.sede_id : '';
                             const orarioAttuale = turno ? (turno.orario || '10-15') : '10-15';
                             const isStandard = ['10-15', '15-20:30', 'RIPOSO'].includes(orarioAttuale);
+
+                            let orariCustomOptions = `<option value="">-- Scegli Orario --</option>`;
+                            listaOrariPersonalizzati.forEach(o => {
+                                orariCustomOptions += `<option value="${o}" ${orarioAttuale === o ? 'selected' : ''}>${o}</option>`;
+                            });
+                            // Se un orario vecchio non è nella lista, lo aggiungiamo dinamicamente in cima
+                            if (!isStandard && !listaOrariPersonalizzati.includes(orarioAttuale)) {
+                                orariCustomOptions += `<option value="${orarioAttuale}" selected>${orarioAttuale}</option>`;
+                            }
 
                             html += `
                                 <div class="space-y-1.5 p-1 bg-white border border-gray-200 rounded shadow-xs">
@@ -1157,12 +1294,11 @@
                                         <option value="CUSTOM" ${turno && !isStandard ? 'selected' : ''} class="text-purple-700">✏️ Orario Personalizzato</option>
                                     </select>
 
-                                    <input type="text" 
-                                           id="custom-input-${p.id}-${d.dataStr}" 
-                                           value="${(!isStandard && turno) ? orarioAttuale : ''}" 
-                                           placeholder="Es: 09:00 - 14:00"
-                                           onchange="inviaTurnoPromoter(${p.id}, '${d.dataStr}')"
-                                           class="${(!isStandard && turno) ? '' : 'hidden'} w-full p-1 border border-purple-300 rounded bg-purple-50 text-[10px] text-center font-bold outline-none focus:border-purple-600">
+                                    <select id="custom-input-${p.id}-${d.dataStr}" 
+                                            onchange="inviaTurnoPromoter(${p.id}, '${d.dataStr}')" 
+                                            class="${(!isStandard && turno) ? '' : 'hidden'} w-full p-1 border border-purple-300 rounded bg-purple-50 text-[10px] text-center font-bold outline-none focus:border-purple-600 mt-1">
+                                        ${orariCustomOptions}
+                                    </select>
                                 </div>
                             `;
                         } else {
@@ -1200,6 +1336,100 @@
 
             html += `</tbody></table></div>`;
             container.innerHTML = html;
+
+            if (!document.getElementById('modal-copertura-turni').classList.contains('hidden')) {
+                renderizzaPannelloCopertura();
+            }
+        }
+
+        function renderizzaPannelloCopertura() {
+            const container = document.getElementById('copertura-griglia-container');
+            if (listaSediGlobale.length === 0) {
+                container.innerHTML = '<p class="text-center p-6 text-gray-500 font-bold">Nessuna sede configurata.</p>';
+                return;
+            }
+
+            const fasceStandard = [
+                { key: '10-15', label: '10:00 - 15:00', badgeClass: 'bg-amber-100 text-amber-900 border-amber-300' },
+                { key: '15-20:30', label: '15:00 - 20:30', badgeClass: 'bg-indigo-100 text-indigo-900 border-indigo-300' }
+            ];
+
+            let html = `
+                <div class="overflow-x-auto bg-white border border-gray-200 rounded shadow-sm">
+                    <table class="w-full text-left border-collapse min-w-[950px]">
+                        <thead>
+                            <tr class="bg-indigo-700 text-white text-xs uppercase font-bold text-center">
+                                <th class="p-2.5 text-left w-44 border-r border-indigo-600">Sede Stand</th>
+                                <th class="p-2.5 w-32 border-r border-indigo-600">Fascia</th>
+                                ${cacheDateSettimana.map(d => `<th class="p-2.5 border-r border-indigo-600">${d.giornoNome}<br><span class="text-[10px] text-indigo-200 font-normal">${d.dataLabel}</span></th>`).join('')}
+                            </tr>
+                        </thead>
+                        <tbody class="text-xs">
+            `;
+
+            let slotScopertiTotali = 0;
+
+            listaSediGlobale.forEach((sede, idxSede) => {
+                const bgSede = idxSede % 2 === 0 ? 'bg-white' : 'bg-gray-50';
+
+                fasceStandard.forEach((fascia, idxFascia) => {
+                    html += `<tr class="border-b ${bgSede}">`;
+
+                    if (idxFascia === 0) {
+                        html += `<td rowspan="2" class="p-3 font-bold text-gray-800 border-r align-middle bg-gray-100/70 text-sm">📍 ${sede.nome}</td>`;
+                    }
+
+                    html += `<td class="p-2 border-r text-center font-bold text-[11px] text-gray-700 align-middle"><span class="px-2 py-0.5 rounded ${fascia.badgeClass} border">${fascia.label}</span></td>`;
+
+                    cacheDateSettimana.forEach(d => {
+                        const assegnati = cacheTurniSettimana.filter(t => {
+                            if (t.data !== d.dataStr || t.sede_id != sede.id) return false;
+                            const orario = (t.orario || '').trim();
+                            if (fascia.key === '10-15') {
+                                return orario === '10-15' || orario.toLowerCase().startsWith('10') || orario.toLowerCase().startsWith('08') || orario.toLowerCase().startsWith('09');
+                            } else {
+                                return orario === '15-20:30' || orario.toLowerCase().startsWith('15') || orario.toLowerCase().startsWith('14') || orario.toLowerCase().startsWith('16');
+                            }
+                        });
+
+                        const numPromoter = assegnati.length;
+
+                        html += `<td class="p-2 border-r text-center align-middle">`;
+
+                        if (numPromoter === 0) {
+                            slotScopertiTotali++;
+                            html += `<span class="inline-block px-2 py-1 bg-red-100 text-red-700 border border-red-300 font-bold text-[10px] rounded animate-pulse">⚠️ SCOPERTO (0)</span>`;
+                        } else {
+                            const nomi = assegnati.map(t => {
+                                const p = listaPromoterGlobale.find(p => p.id == t.promoter_id);
+                                return p ? `${p.cognome} ${p.nome.charAt(0)}.` : 'Promoter';
+                            }).join(', ');
+
+                            const badgeColor = numPromoter === 1 
+                                ? 'bg-emerald-100 text-emerald-800 border-emerald-300' 
+                                : 'bg-blue-100 text-blue-800 border-blue-300';
+
+                            html += `
+                                <div class="inline-block px-2 py-1 rounded border font-bold text-[11px] ${badgeColor}">
+                                    👥 <strong>${numPromoter}</strong> Promoter
+                                </div>
+                                <div class="text-[10px] text-gray-600 font-medium truncate mt-0.5" title="${nomi}">${nomi}</div>
+                            `;
+                        }
+
+                        html += `</td>`;
+                    });
+
+                    html += `</tr>`;
+                });
+            });
+
+            html += `</tbody></table></div>`;
+            document.getElementById('badge-totale-scoperti').textContent = `${slotScopertiTotali} slot scoperti`;
+            document.getElementById('badge-totale-scoperti').className = slotScopertiTotali > 0 
+                ? "px-3 py-1 bg-red-100 text-red-700 border border-red-300 rounded font-bold text-xs" 
+                : "px-3 py-1 bg-green-100 text-green-700 border border-green-300 rounded font-bold text-xs";
+            container.innerHTML = html;
         }
 
         function gestisciCambioPreset(promoterId, dataStr, valore) {
@@ -1208,14 +1438,12 @@
 
             if (valore === 'CUSTOM') {
                 inputCustom.classList.remove('hidden');
-                inputCustom.focus();
             } else if (valore === 'RIPOSO') {
                 inputCustom.classList.add('hidden');
                 selectSede.value = '';
                 inviaTurnoPromoter(promoterId, dataStr);
             } else {
                 inputCustom.classList.add('hidden');
-                // Se non era selezionata nessuna sede, preimposta la prima sede disponibile
                 if (!selectSede.value && listaSediGlobale.length > 0) {
                     selectSede.value = listaSediGlobale[0].id;
                 }
@@ -1231,15 +1459,22 @@
             const sedeVal = selectSede.value ? parseInt(selectSede.value) : null;
             const presetVal = selectPreset.value;
 
-            // Se è impostato a riposo o non c'è sede, rimuovi il turno
             if (presetVal === 'RIPOSO' || sedeVal === null) {
                 await db.from('turni').delete().match({ data: dataStr, promoter_id: promoterId });
+                cacheTurniSettimana = cacheTurniSettimana.filter(t => !(t.data === dataStr && t.promoter_id == promoterId));
+                
+                // Aggiorniamo le ore calcolate in tempo reale ricreando la tabella (solo se non dà fastidio all'utente, altrimenti calcola e inietta)
+                caricaTabellaTurni(); 
                 return;
             }
 
             let orarioFinale = presetVal;
             if (presetVal === 'CUSTOM') {
-                orarioFinale = inputCustom.value.trim() || '10-15';
+                orarioFinale = inputCustom.value || '10-15';
+                if(!inputCustom.value) {
+                    // se ancora non ha selezionato niente dal dropdown, aspetta
+                    return;
+                }
             }
 
             const payload = {
@@ -1250,6 +1485,17 @@
             };
 
             await db.from('turni').upsert(payload, { onConflict: 'data,promoter_id' });
+
+            const idx = cacheTurniSettimana.findIndex(t => t.data === dataStr && t.promoter_id == promoterId);
+            if (idx > -1) {
+                cacheTurniSettimana[idx].sede_id = sedeVal;
+                cacheTurniSettimana[idx].orario = orarioFinale;
+            } else {
+                cacheTurniSettimana.push({ ...payload });
+            }
+
+            // Ricostruisce per ricalcolare subito le ore
+            caricaTabellaTurni(); 
         }
 
         // ==========================================
@@ -1728,15 +1974,18 @@
             </div>
         </div>
 
-        <!-- SCHEDA TURNI SETTIMANALI (PROMOTER CENTRIC) -->
+        <!-- SCHEDA TURNI SETTIMANALI -->
         <div id="sez-turni" class="hidden p-6 bg-white border border-gray-200 rounded shadow-sm space-y-6">
             <div class="p-4 bg-blue-50 border border-blue-100 rounded flex flex-wrap justify-between items-center gap-4">
                 <div>
                     <h2 class="text-xl font-bold text-gray-800 flex items-center gap-2">📅 Tabellone Turni Settimanali</h2>
-                    <p class="text-xs text-gray-600 mt-1">Visualizzazione per Promoter. Standard: 10-15 e 15-20:30 (personalizzabile). Sblocca con il PIN per modificare.</p>
+                    <p class="text-xs text-gray-600 mt-1">Gestione turni per Promoter. Usa il pannello per monitorare la copertura degli stand.</p>
                 </div>
                 
                 <div class="flex flex-wrap items-center gap-2">
+                    <button onclick="togglePannelloCopertura()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded shadow transition text-xs flex items-center gap-1">
+                        🏢 Copertura Sedi & Turni Scoperti
+                    </button>
                     <button id="btn-lock-turni" onclick="apriModalPinTurni()" class="px-4 py-2 bg-gray-700 hover:bg-gray-800 text-white font-bold rounded shadow transition text-xs flex items-center gap-1">
                         🔒 Sblocca Modifica (Responsabile)
                     </button>
@@ -1877,6 +2126,39 @@
             </div>
         </div>
 
+    </div>
+
+    <!-- POP-UP / MODALE COPERTURA SEDI & TURNI SCOPERTI -->
+    <div id="modal-copertura-turni" class="hidden fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4">
+        <div class="bg-white rounded-lg shadow-2xl w-full max-w-6xl max-h-[92vh] flex flex-col relative overflow-hidden">
+            
+            <div class="p-4 bg-indigo-700 text-white flex justify-between items-center shrink-0">
+                <div class="flex items-center gap-3">
+                    <span class="text-2xl">🏢</span>
+                    <div>
+                        <h3 class="text-lg font-black tracking-wide">Copertura Stand & Controllo Turni Scoperti</h3>
+                        <p class="text-xs text-indigo-200">Settimana: <span id="copertura-range-date" class="font-bold text-white"></span></p>
+                    </div>
+                </div>
+                <div class="flex items-center gap-3">
+                    <span id="badge-totale-scoperti" class="px-3 py-1 bg-red-100 text-red-700 font-bold rounded text-xs border border-red-300">0 scoperti</span>
+                    <button onclick="togglePannelloCopertura()" class="text-white hover:text-red-300 font-bold text-2xl px-2">✕</button>
+                </div>
+            </div>
+
+            <div class="p-4 overflow-y-auto flex-1 space-y-4 bg-gray-50">
+                <div class="flex items-center justify-between bg-white p-3 rounded border border-gray-200 shadow-xs text-xs text-gray-600">
+                    <div>
+                        💡 <strong>Guida rapida:</strong> Mostra il numero di promoter presenti per ogni turno standard (<strong>10:00 - 15:00</strong> e <strong>15:00 - 20:30</strong>). Se uno slot è <span class="font-bold text-red-600">SCOPERTO (0)</span>, significa che nessun promoter è assegnato a quello stand in quella fascia.
+                    </div>
+                </div>
+                <div id="copertura-griglia-container"></div>
+            </div>
+
+            <div class="p-3 bg-gray-100 border-t flex justify-end shrink-0">
+                <button onclick="togglePannelloCopertura()" class="px-5 py-2 bg-gray-700 hover:bg-gray-800 text-white font-bold rounded text-xs">Chiudi Pannello</button>
+            </div>
+        </div>
     </div>
 
     <!-- POP-UP QR CODE -->
