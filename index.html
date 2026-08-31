@@ -41,12 +41,10 @@
         let listaPromoterGlobale = [];
         let listaSediGlobale = [];
 
-        // Cache turni correnti e note
         let cacheTurniSettimana = [];
         let cacheDateSettimana = [];
         let cacheNoteSettimana = [];
 
-        // Lista menu a tendina per orari personalizzati
         const listaOrariPersonalizzati = [
             "08:00-13:00", "08:30-13:30", "09:00-13:00", "09:00-14:00",
             "09:30-14:30", "10:00-14:00", "10:00-16:00", "13:00-18:00", 
@@ -1011,7 +1009,6 @@
             return `${y}-${m}-${day}`;
         }
         
-        // Funzione per calcolare le ore da un formato come "10-15" o "15:00-20:30"
         function calcolaOreTurno(orarioStr) {
             if (!orarioStr || orarioStr === 'RIPOSO' || orarioStr === 'CUSTOM') return 0;
             try {
@@ -1080,18 +1077,14 @@
                 btn.className = "px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded shadow transition text-xs flex items-center gap-1";
                 btn.innerHTML = "🔓 Modalità Modifica Attiva (Clicca per Bloccare)";
 
-                // Mostra il pulsante copertura
                 btnCopertura.classList.remove('hidden');
                 btnCopertura.classList.add('flex');
             } else {
                 btn.className = "px-4 py-2 bg-gray-700 hover:bg-gray-800 text-white font-bold rounded shadow transition text-xs flex items-center gap-1";
                 btn.innerHTML = "🔒 Sblocca Modifica (Responsabile)";
 
-                // Nascondi il pulsante copertura
                 btnCopertura.classList.add('hidden');
                 btnCopertura.classList.remove('flex');
-
-                // Se la finestra della copertura è aperta, chiudila in automatico
                 document.getElementById('modal-copertura-turni').classList.add('hidden');
             }
         }
@@ -1107,30 +1100,85 @@
         }
         
         async function salvaNotaSettimanale(promoterId, settimanaStr) {
-            const notaVal = document.getElementById(`nota-${promoterId}`).value;
+            const textarea = document.getElementById(`nota-${promoterId}`);
+            const notaVal = textarea.value;
+            
+            textarea.classList.add('bg-green-50'); 
+            
             const payload = { promoter_id: promoterId, settimana: settimanaStr, nota: notaVal };
+            await db.from('note_settimanali').upsert(payload, { onConflict: 'promoter_id,settimana' });
             
-            const { error } = await db.from('note_settimanali').upsert(payload, { onConflict: 'promoter_id,settimana' });
-            const btn = document.getElementById(`btn-nota-${promoterId}`);
-            
-            if (error) {
-                btn.textContent = "Errore!";
-                btn.classList.replace('bg-blue-600', 'bg-red-600');
-            } else {
-                // Aggiorna cache
-                const idx = cacheNoteSettimana.findIndex(n => n.promoter_id == promoterId && n.settimana == settimanaStr);
-                if (idx > -1) cacheNoteSettimana[idx].nota = notaVal;
-                else cacheNoteSettimana.push(payload);
-                
-                btn.textContent = "✅ Salvato";
-                btn.classList.replace('bg-blue-600', 'bg-green-600');
-            }
+            const idx = cacheNoteSettimana.findIndex(n => n.promoter_id == promoterId && n.settimana == settimanaStr);
+            if (idx > -1) cacheNoteSettimana[idx].nota = notaVal;
+            else cacheNoteSettimana.push(payload);
             
             setTimeout(() => {
-                btn.textContent = "💾 Salva Nota";
-                btn.classList.remove('bg-green-600', 'bg-red-600');
-                btn.classList.add('bg-blue-600');
-            }, 2000);
+                textarea.classList.remove('bg-green-50');
+                textarea.classList.add('border-green-400');
+                setTimeout(() => textarea.classList.remove('border-green-400'), 1000);
+            }, 300);
+        }
+
+        function aggiornaOreInUI(promoterId) {
+            let oreTotaliSettimana = 0;
+            cacheDateSettimana.forEach(d => {
+                const turno = cacheTurniSettimana.find(t => t.promoter_id == promoterId && t.data == d.dataStr);
+                if (turno) oreTotaliSettimana += calcolaOreTurno(turno.orario);
+            });
+            
+            const spanOre = document.getElementById(`ore-promoter-${promoterId}`);
+            const spanStatus = document.getElementById(`status-ore-${promoterId}`);
+            
+            if (spanOre && spanStatus) {
+                spanOre.textContent = `${oreTotaliSettimana}h`;
+                let oreMancanti = 30 - oreTotaliSettimana;
+                let badgeClass = oreTotaliSettimana >= 30 ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800";
+                let labelOre = oreMancanti > 0 ? `Mancano ${oreMancanti}h al Target (30h)` : `+${Math.abs(oreMancanti)}h Extra`;
+                spanStatus.className = `px-1.5 py-0.5 rounded font-bold border ${badgeClass}`;
+                spanStatus.textContent = labelOre;
+            }
+        }
+
+        async function inviaTurnoPromoter(promoterId, dataStr) {
+            const selectSede = document.getElementById(`sede-${promoterId}-${dataStr}`);
+            const selectOrario = document.getElementById(`orario-${promoterId}-${dataStr}`);
+
+            const sedeVal = selectSede.value ? parseInt(selectSede.value) : null;
+            const orarioVal = selectOrario.value;
+
+            selectSede.classList.add('opacity-50');
+            selectOrario.classList.add('opacity-50');
+
+            if (!orarioVal || sedeVal === null) {
+                await db.from('turni').delete().match({ data: dataStr, promoter_id: promoterId });
+                cacheTurniSettimana = cacheTurniSettimana.filter(t => !(t.data === dataStr && t.promoter_id == promoterId));
+                
+                selectSede.classList.remove('opacity-50');
+                selectOrario.classList.remove('opacity-50');
+                aggiornaOreInUI(promoterId);
+                return;
+            }
+
+            const payload = {
+                data: dataStr,
+                promoter_id: promoterId,
+                sede_id: sedeVal,
+                orario: orarioVal
+            };
+
+            await db.from('turni').upsert(payload, { onConflict: 'data,promoter_id' });
+
+            const idx = cacheTurniSettimana.findIndex(t => t.data === dataStr && t.promoter_id == promoterId);
+            if (idx > -1) {
+                cacheTurniSettimana[idx].sede_id = sedeVal;
+                cacheTurniSettimana[idx].orario = orarioVal;
+            } else {
+                cacheTurniSettimana.push({ ...payload });
+            }
+
+            selectSede.classList.remove('opacity-50');
+            selectOrario.classList.remove('opacity-50');
+            aggiornaOreInUI(promoterId);
         }
 
         async function caricaTabellaTurni() {
@@ -1148,7 +1196,6 @@
             document.getElementById('turni-range-date').textContent = labelRange;
             document.getElementById('copertura-range-date').textContent = labelRange;
 
-            // Fetch Turni
             const { data: turni, error } = await db.from('turni')
                 .select('*, sedi(nome), promoter(id, nome, cognome)')
                 .gte('data', strLunedi)
@@ -1159,7 +1206,6 @@
                 return;
             }
             
-            // Fetch Note
             const { data: note, errorNote } = await db.from('note_settimanali')
                 .select('*')
                 .eq('settimana', strLunedi);
@@ -1172,7 +1218,7 @@
                 const key = `${t.promoter_id}_${t.data}`;
                 mappaTurni[key] = {
                     sede_id: t.sede_id,
-                    orario: t.orario || '10-15',
+                    orario: t.orario || '',
                     nomeSede: t.sedi ? t.sedi.nome : '-'
                 };
             });
@@ -1214,7 +1260,6 @@
                 promotersMostrati.forEach((p, idx) => {
                     const bgRiga = idx % 2 === 0 ? 'bg-white' : 'bg-gray-50';
                     
-                    // Calcolo ore totali assegnate
                     let oreTotaliSettimana = 0;
                     cacheDateSettimana.forEach(d => {
                         const key = `${p.id}_${d.dataStr}`;
@@ -1227,7 +1272,6 @@
 
                     html += `<tr class="border-b ${bgRiga} hover:bg-blue-50/40 transition">`;
                     
-                    // COLONNA PROMOTER - Differenziata per Vista Responsabile o Vista Promoter
                     html += `<td class="p-3 border-r align-top bg-gray-100/60 min-w-[230px]">
                                 <div class="font-bold text-gray-800 text-sm mb-2">${p.cognome} ${p.nome}</div>`;
 
@@ -1239,16 +1283,15 @@
                         html += `
                             <div class="bg-white p-2 rounded shadow-sm border text-[11px] mb-2">
                                 <div class="flex justify-between mb-1">
-                                    <span>Ore assegnate:</span> <span class="font-bold">${oreTotaliSettimana}h</span>
+                                    <span>Ore assegnate:</span> <span id="ore-promoter-${p.id}" class="font-bold">${oreTotaliSettimana}h</span>
                                 </div>
                                 <div class="flex justify-between items-center">
-                                    <span>Status:</span> <span class="px-1.5 py-0.5 rounded font-bold border ${badgeClass}">${labelOre}</span>
+                                    <span>Status:</span> <span id="status-ore-${p.id}" class="px-1.5 py-0.5 rounded font-bold border ${badgeClass}">${labelOre}</span>
                                 </div>
                             </div>
                             <div class="flex flex-col gap-1 mt-2 border-t pt-2 border-gray-300">
-                                <label class="text-[10px] font-bold text-gray-600">Nota Settimanale (Es. ritardi, target):</label>
-                                <textarea id="nota-${p.id}" rows="2" class="w-full p-1.5 border border-blue-300 rounded text-[11px] bg-white outline-none focus:border-blue-600" placeholder="Scrivi una nota per questa settimana...">${notaTesto}</textarea>
-                                <button id="btn-nota-${p.id}" onclick="salvaNotaSettimanale(${p.id}, '${strLunedi}')" class="bg-blue-600 hover:bg-blue-700 text-white text-[10px] font-bold py-1.5 rounded transition shadow-sm">💾 Salva Nota</button>
+                                <label class="text-[10px] font-bold text-gray-600">Nota Settimanale (Auto-salvataggio):</label>
+                                <textarea id="nota-${p.id}" onchange="salvaNotaSettimanale(${p.id}, '${strLunedi}')" rows="2" class="w-full p-1.5 border border-gray-300 rounded text-[11px] bg-white outline-none focus:border-blue-500 transition-colors" placeholder="Scrivi una nota per questa settimana...">${notaTesto}</textarea>
                             </div>
                         `;
                     } else {
@@ -1277,39 +1320,36 @@
 
                         if (modalitaModificaTurni) {
                             const sedeAttuale = turno ? turno.sede_id : '';
-                            const orarioAttuale = turno ? (turno.orario || '10-15') : '10-15';
-                            const isStandard = ['10-15', '15-20:30', 'RIPOSO'].includes(orarioAttuale);
+                            const orarioAttuale = turno ? turno.orario : '';
 
-                            let orariCustomOptions = `<option value="">-- Scegli Orario --</option>`;
+                            let orariCustomOptions = `<option value="">-- Inserisci Orario --</option>`;
+                            orariCustomOptions += `<optgroup label="Standard">
+                                <option value="10-15" ${orarioAttuale === '10-15' ? 'selected' : ''}>10:00 - 15:00</option>
+                                <option value="15-20:30" ${orarioAttuale === '15-20:30' ? 'selected' : ''}>15:00 - 20:30</option>
+                            </optgroup>
+                            <optgroup label="Personalizzati">`;
+                            
                             listaOrariPersonalizzati.forEach(o => {
                                 orariCustomOptions += `<option value="${o}" ${orarioAttuale === o ? 'selected' : ''}>${o}</option>`;
                             });
-                            // Se un orario vecchio non è nella lista, lo aggiungiamo dinamicamente in cima
-                            if (!isStandard && !listaOrariPersonalizzati.includes(orarioAttuale)) {
+                            
+                            if (orarioAttuale && !['10-15', '15-20:30'].includes(orarioAttuale) && !listaOrariPersonalizzati.includes(orarioAttuale)) {
                                 orariCustomOptions += `<option value="${orarioAttuale}" selected>${orarioAttuale}</option>`;
                             }
+                            orariCustomOptions += `</optgroup>`;
 
                             html += `
                                 <div class="space-y-1.5 p-1 bg-white border border-gray-200 rounded shadow-xs">
                                     <select id="sede-${p.id}-${d.dataStr}" 
                                             onchange="inviaTurnoPromoter(${p.id}, '${d.dataStr}')" 
-                                            class="w-full p-1 border rounded bg-white text-[11px] font-semibold text-gray-700 outline-none focus:border-blue-500">
+                                            class="w-full p-1 border rounded bg-white text-[11px] font-semibold text-gray-700 outline-none focus:border-blue-500 transition-opacity">
                                         <option value="">-- Nessuna Sede --</option>
                                         ${listaSediGlobale.map(s => `<option value="${s.id}" ${s.id == sedeAttuale ? 'selected' : ''}>${s.nome}</option>`).join('')}
                                     </select>
 
-                                    <select id="preset-${p.id}-${d.dataStr}" 
-                                            onchange="gestisciCambioPreset(${p.id}, '${d.dataStr}', this.value)" 
-                                            class="w-full p-1 border rounded bg-white text-[11px] font-bold outline-none focus:border-blue-500">
-                                        <option value="10-15" ${orarioAttuale === '10-15' ? 'selected' : ''} class="text-amber-800">10:00 - 15:00</option>
-                                        <option value="15-20:30" ${orarioAttuale === '15-20:30' ? 'selected' : ''} class="text-indigo-800">15:00 - 20:30</option>
-                                        <option value="RIPOSO" ${!turno ? 'selected' : ''} class="text-gray-500">🏖️ Riposo / Libero</option>
-                                        <option value="CUSTOM" ${turno && !isStandard ? 'selected' : ''} class="text-purple-700">✏️ Orario Personalizzato</option>
-                                    </select>
-
-                                    <select id="custom-input-${p.id}-${d.dataStr}" 
+                                    <select id="orario-${p.id}-${d.dataStr}" 
                                             onchange="inviaTurnoPromoter(${p.id}, '${d.dataStr}')" 
-                                            class="${(!isStandard && turno) ? '' : 'hidden'} w-full p-1 border border-purple-300 rounded bg-purple-50 text-[10px] text-center font-bold outline-none focus:border-purple-600 mt-1">
+                                            class="w-full p-1 border rounded bg-white text-[11px] font-bold outline-none focus:border-blue-500 mt-1 transition-opacity">
                                         ${orariCustomOptions}
                                     </select>
                                 </div>
@@ -1415,7 +1455,7 @@
                         } else {
                             const nomi = assegnati.map(t => {
                                 const p = listaPromoterGlobale.find(p => p.id == t.promoter_id);
-                                return p ? `${p.cognome} ${p.nome.charAt(0)}.` : 'Promoter';
+                                return p ? `${p.nome} ${p.cognome.charAt(0)}.` : 'Promoter';
                             }).join(', ');
 
                             const badgeColor = numPromoter === 1 
@@ -1443,72 +1483,6 @@
                 ? "px-3 py-1 bg-red-100 text-red-700 border border-red-300 rounded font-bold text-xs" 
                 : "px-3 py-1 bg-green-100 text-green-700 border border-green-300 rounded font-bold text-xs";
             container.innerHTML = html;
-        }
-
-        function gestisciCambioPreset(promoterId, dataStr, valore) {
-            const inputCustom = document.getElementById(`custom-input-${promoterId}-${dataStr}`);
-            const selectSede = document.getElementById(`sede-${promoterId}-${dataStr}`);
-
-            if (valore === 'CUSTOM') {
-                inputCustom.classList.remove('hidden');
-            } else if (valore === 'RIPOSO') {
-                inputCustom.classList.add('hidden');
-                selectSede.value = '';
-                inviaTurnoPromoter(promoterId, dataStr);
-            } else {
-                inputCustom.classList.add('hidden');
-                if (!selectSede.value && listaSediGlobale.length > 0) {
-                    selectSede.value = listaSediGlobale[0].id;
-                }
-                inviaTurnoPromoter(promoterId, dataStr);
-            }
-        }
-
-        async function inviaTurnoPromoter(promoterId, dataStr) {
-            const selectSede = document.getElementById(`sede-${promoterId}-${dataStr}`);
-            const selectPreset = document.getElementById(`preset-${promoterId}-${dataStr}`);
-            const inputCustom = document.getElementById(`custom-input-${promoterId}-${dataStr}`);
-
-            const sedeVal = selectSede.value ? parseInt(selectSede.value) : null;
-            const presetVal = selectPreset.value;
-
-            if (presetVal === 'RIPOSO' || sedeVal === null) {
-                await db.from('turni').delete().match({ data: dataStr, promoter_id: promoterId });
-                cacheTurniSettimana = cacheTurniSettimana.filter(t => !(t.data === dataStr && t.promoter_id == promoterId));
-                
-                // Aggiorniamo le ore calcolate in tempo reale ricreando la tabella (solo se non dà fastidio all'utente, altrimenti calcola e inietta)
-                caricaTabellaTurni(); 
-                return;
-            }
-
-            let orarioFinale = presetVal;
-            if (presetVal === 'CUSTOM') {
-                orarioFinale = inputCustom.value || '10-15';
-                if(!inputCustom.value) {
-                    // se ancora non ha selezionato niente dal dropdown, aspetta
-                    return;
-                }
-            }
-
-            const payload = {
-                data: dataStr,
-                promoter_id: promoterId,
-                sede_id: sedeVal,
-                orario: orarioFinale
-            };
-
-            await db.from('turni').upsert(payload, { onConflict: 'data,promoter_id' });
-
-            const idx = cacheTurniSettimana.findIndex(t => t.data === dataStr && t.promoter_id == promoterId);
-            if (idx > -1) {
-                cacheTurniSettimana[idx].sede_id = sedeVal;
-                cacheTurniSettimana[idx].orario = orarioFinale;
-            } else {
-                cacheTurniSettimana.push({ ...payload });
-            }
-
-            // Ricostruisce per ricalcolare subito le ore
-            caricaTabellaTurni(); 
         }
 
         // ==========================================
@@ -1996,7 +1970,6 @@
                 </div>
                 
                 <div class="flex flex-wrap items-center gap-2">
-                    <!-- Pulsante copertura nascosto di default -->
                     <button id="btn-copertura" onclick="togglePannelloCopertura()" class="hidden px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded shadow transition text-xs items-center gap-1">
                         🏢 Copertura Sedi & Turni Scoperti
                     </button>
