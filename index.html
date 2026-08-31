@@ -24,6 +24,11 @@
         const SUPABASE_KEY = 'sb_publishable_RJkiCWD7payPFOxUlHz_uw_yQMz5Ydf';
         const db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
+        // PIN RESPONSABILE PER MODIFICA TURNI
+        const PIN_RESPONSABILE = "1234";
+        let modalitaModificaTurni = false;
+        let dataInizioSettimanaCorrente = null;
+
         let idContrattoInModifica = null;
         let ultimaSedeSelezionata = "";
         let sessoSelezionatoCF = "M";
@@ -34,6 +39,8 @@
         let paginaCorrente = 1;
         let contrattiPerPagina = 10;
         let promoterDaLicenziare = null;
+        let listaPromoterGlobale = [];
+        let listaSediGlobale = [];
 
         const databaseComuni = {
             "CATANIA": "C351", "MISTERBIANCO": "F250", "ACIREALE": "A028", "PATERNÒ": "G371",
@@ -52,20 +59,19 @@
             document.getElementById('sez-nuovo').classList.add('hidden');
             document.getElementById('sez-registro').classList.add('hidden');
             document.getElementById('sez-statistiche').classList.add('hidden');
+            document.getElementById('sez-turni').classList.add('hidden');
             document.getElementById('sez-liste').classList.add('hidden');
             document.getElementById('sez-calcola-cf').classList.add('hidden');
             
-            if (document.getElementById('btn-nav-nuovo')) document.getElementById('btn-nav-nuovo').className = "px-4 py-2 rounded-t font-semibold shadow-sm transition tab-inattivo";
-            if (document.getElementById('btn-nav-registro')) document.getElementById('btn-nav-registro').className = "px-4 py-2 rounded-t font-semibold shadow-sm transition tab-inattivo";
-            if (document.getElementById('btn-nav-statistiche')) document.getElementById('btn-nav-statistiche').className = "px-4 py-2 rounded-t font-semibold shadow-sm transition tab-inattivo";
-            if (document.getElementById('btn-nav-liste')) document.getElementById('btn-nav-liste').className = "px-4 py-2 rounded-t font-semibold shadow-sm transition tab-inattivo";
-            if (document.getElementById('btn-nav-calcola-cf')) document.getElementById('btn-nav-calcola-cf').className = "px-4 py-2 rounded-t font-semibold shadow-sm transition tab-inattivo";
+            ['nuovo', 'registro', 'statistiche', 'turni', 'liste', 'calcola-cf'].forEach(s => {
+                const el = document.getElementById('btn-nav-' + s);
+                if (el) el.className = "px-4 py-2 rounded-t font-semibold shadow-sm transition tab-inattivo";
+            });
 
             document.getElementById('sez-' + scheda).classList.remove('hidden');
             
-            if (document.getElementById('btn-nav-' + scheda)) {
-                document.getElementById('btn-nav-' + scheda).className = "px-4 py-2 rounded-t font-semibold shadow-sm transition tab-attivo";
-            }
+            const btnAttivo = document.getElementById('btn-nav-' + scheda);
+            if (btnAttivo) btnAttivo.className = "px-4 py-2 rounded-t font-semibold shadow-sm transition tab-attivo";
 
             if (scheda === 'home') {
                 aggiornaDashboardHome();
@@ -76,6 +82,8 @@
                 caricaRegistro();
             } else if (scheda === 'statistiche') {
                 caricaStatistiche();
+            } else if (scheda === 'turni') {
+                inizializzaTurni();
             } else if (scheda === 'liste') {
                 caricaGestioneListe();
             } else if (scheda === 'calcola-cf') {
@@ -88,7 +96,6 @@
             document.getElementById(idContainer).appendChild(formContainer);
         }
 
-        // --- GESTIONE POP-UP QR CODE ---
         function mostraQR() {
             const currentUrl = encodeURIComponent(window.location.href);
             const qrApiUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${currentUrl}`;
@@ -99,7 +106,6 @@
         function chiudiModalQR() {
             document.getElementById('modal-qr').classList.add('hidden');
         }
-        // -------------------------------
 
         async function caricaDatiForm() {
             const selectP = document.getElementById('select-promoter');
@@ -109,21 +115,31 @@
             const filtroS = document.getElementById('filtro-sede');
             const statP = document.getElementById('stat-filtro-promoter');
             const statS = document.getElementById('stat-filtro-sede');
+            const turniP = document.getElementById('turni-filtro-promoter');
 
-            const { data: promoters } = await db.from('promoter').select('*').eq('attivo', true).order('nome');
+            const { data: promoters } = await db.from('promoter').select('*').order('attivo', { ascending: false }).order('nome');
             if (promoters) {
+                listaPromoterGlobale = promoters;
                 selectP.innerHTML = '<option value="">Seleziona...</option>';
                 filtroP.innerHTML = '<option value="">Tutti i Promoter</option>';
                 statP.innerHTML = '<option value="">Tutti i Promoter</option>';
-                promoters.forEach(p => {
+                turniP.innerHTML = '<option value="">Tutti i Promoter (Vista Globale)</option>';
+
+                promoters.filter(p => p.attivo).forEach(p => {
                     selectP.innerHTML += `<option value="${p.id}">${p.nome} ${p.cognome}</option>`;
                     filtroP.innerHTML += `<option value="${p.id}">${p.nome} ${p.cognome}</option>`;
                     statP.innerHTML += `<option value="${p.id}">${p.nome} ${p.cognome}</option>`;
+                });
+
+                promoters.forEach(p => {
+                    const tag = p.attivo ? '' : ' (Disattivato)';
+                    turniP.innerHTML += `<option value="${p.id}">${p.nome} ${p.cognome}${tag}</option>`;
                 });
             }
 
             const { data: sedi } = await db.from('sedi').select('*').order('nome');
             if (sedi) {
+                listaSediGlobale = sedi;
                 selectS.innerHTML = '<option value="">Seleziona...</option>';
                 homeS.innerHTML = '<option value="">-- Nessuna sede selezionata --</option>';
                 filtroS.innerHTML = '<option value="">Tutte le Sedi</option>';
@@ -200,14 +216,12 @@
                 selectP.value = '';
                 selectP.disabled = true;
                 selectP.classList.add('bg-gray-200');
-                
                 inputCliente.value = 'FITTIZIO';
                 inputCliente.readOnly = true;
                 inputCliente.classList.add('bg-gray-200', 'font-bold', 'text-gray-500');
             } else {
                 selectP.disabled = false;
                 selectP.classList.remove('bg-gray-200');
-                
                 inputCliente.value = '';
                 inputCliente.readOnly = false;
                 inputCliente.classList.remove('bg-gray-200', 'font-bold', 'text-gray-500');
@@ -762,7 +776,6 @@
             const statsPromoter = {};
             const statsSedi = {};
 
-            // MESE CORRENTE: Aggiungi gli "zero" calcolando le date di assunzione e licenziamento
             if (modalitaPeriodoAttiva === 'mese' && dataDa && dataA) {
                 listaPromoters.forEach(p => {
                     const assunzione = p.data_assunzione ? p.data_assunzione : '2000-01-01';
@@ -972,6 +985,206 @@
             caricaStatistiche();
         }
 
+        // ==========================================
+        // GESTIONE TURNI SETTIMANALI (PROTETTI DA PIN)
+        // ==========================================
+        function getLunediSettimana(d) {
+            const date = new Date(d);
+            const day = date.getDay();
+            const diff = date.getDate() - day + (day === 0 ? -6 : 1);
+            return new Date(date.setDate(diff));
+        }
+
+        function formattaDataISO(d) {
+            const y = d.getFullYear();
+            const m = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            return `${y}-${m}-${day}`;
+        }
+
+        function inizializzaTurni() {
+            if (!dataInizioSettimanaCorrente) {
+                dataInizioSettimanaCorrente = getLunediSettimana(new Date());
+            }
+            caricaTabellaTurni();
+        }
+
+        function cambiaSettimanaTurni(offsetSettimane) {
+            dataInizioSettimanaCorrente.setDate(dataInizioSettimanaCorrente.getDate() + (offsetSettimane * 7));
+            caricaTabellaTurni();
+        }
+
+        function apriModalPinTurni() {
+            if (modalitaModificaTurni) {
+                modalitaModificaTurni = false;
+                aggiornaStatoPulsantePin();
+                caricaTabellaTurni();
+            } else {
+                document.getElementById('input-pin-turni').value = '';
+                document.getElementById('msg-errore-pin').classList.add('hidden');
+                document.getElementById('modal-pin-turni').classList.remove('hidden');
+            }
+        }
+
+        function chiudiModalPinTurni() {
+            document.getElementById('modal-pin-turni').classList.add('hidden');
+        }
+
+        function verificaPinTurni() {
+            const inserito = document.getElementById('input-pin-turni').value.trim();
+            if (inserito === PIN_RESPONSABILE) {
+                modalitaModificaTurni = true;
+                chiudiModalPinTurni();
+                aggiornaStatoPulsantePin();
+                caricaTabellaTurni();
+            } else {
+                document.getElementById('msg-errore-pin').classList.remove('hidden');
+            }
+        }
+
+        function aggiornaStatoPulsantePin() {
+            const btn = document.getElementById('btn-lock-turni');
+            if (modalitaModificaTurni) {
+                btn.className = "px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded shadow transition text-xs flex items-center gap-1";
+                btn.innerHTML = "🔓 Modalità Modifica Attiva (Clicca per Bloccare)";
+            } else {
+                btn.className = "px-4 py-2 bg-gray-700 hover:bg-gray-800 text-white font-bold rounded shadow transition text-xs flex items-center gap-1";
+                btn.innerHTML = "🔒 Sblocca Modifica (Responsabile)";
+            }
+        }
+
+        async function caricaTabellaTurni() {
+            const container = document.getElementById('turni-griglia-container');
+            container.innerHTML = '<p class="text-center p-8 text-gray-500 font-bold">Caricamento turni in corso...</p>';
+
+            const lunedi = new Date(dataInizioSettimanaCorrente);
+            const domenica = new Date(lunedi);
+            domenica.setDate(domenica.getDate() + 6);
+
+            const strLunedi = formattaDataISO(lunedi);
+            const strDomenica = formattaDataISO(domenica);
+
+            document.getElementById('turni-range-date').textContent = 
+                `${lunedi.toLocaleDateString('it-IT', { day: '2-digit', month: 'short' })} - ${domenica.toLocaleDateString('it-IT', { day: '2-digit', month: 'short', year: 'numeric' })}`;
+
+            // Scarica turni della settimana
+            const { data: turni, error } = await db.from('turni')
+                .select('*')
+                .gte('data', strLunedi)
+                .lte('data', strDomenica);
+
+            if (error) {
+                container.innerHTML = `<p class="text-center p-8 text-red-600 font-bold">Errore caricamento turni: ${error.message}</p>`;
+                return;
+            }
+
+            const mappaTurni = {};
+            (turni || []).forEach(t => {
+                const key = `${t.data}_${t.sede_id}_${t.fascia}`;
+                mappaTurni[key] = t.promoter_id;
+            });
+
+            const giorniSettimana = ['Lunedì', 'Martedì', 'Mercoledì', 'Giovedì', 'Venerdì', 'Sabato', 'Domenica'];
+            const dateSettimana = [];
+            for (let i = 0; i < 7; i++) {
+                const d = new Date(lunedi);
+                d.setDate(d.getDate() + i);
+                dateSettimana.push({
+                    giornoNome: giorniSettimana[i],
+                    dataStr: formattaDataISO(d),
+                    dataLabel: d.toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit' })
+                });
+            }
+
+            const promoterFiltroId = document.getElementById('turni-filtro-promoter').value;
+
+            let html = `
+                <div class="overflow-x-auto bg-white border border-gray-200 rounded shadow-sm">
+                    <table class="w-full text-left border-collapse min-w-[900px]">
+                        <thead>
+                            <tr class="bg-blue-600 text-white text-xs uppercase font-bold text-center">
+                                <th class="p-3 text-left w-48 border-r border-blue-500">Sede Stand</th>
+                                <th class="p-3 w-28 border-r border-blue-500">Fascia</th>
+                                ${dateSettimana.map(d => `<th class="p-3 border-r border-blue-500">${d.giornoNome}<br><span class="text-[10px] text-blue-100 font-normal">${d.dataLabel}</span></th>`).join('')}
+                            </tr>
+                        </thead>
+                        <tbody class="text-sm">
+            `;
+
+            if (listaSediGlobale.length === 0) {
+                html += `<tr><td colspan="9" class="p-6 text-center text-gray-500">Nessuna sede configurata. Aggiungine una in Gestione Liste!</td></tr>`;
+            } else {
+                listaSediGlobale.forEach((sede, idxSede) => {
+                    const bgSede = idxSede % 2 === 0 ? 'bg-white' : 'bg-gray-50';
+                    
+                    ['Mattina', 'Pomeriggio'].forEach((fascia, idxFascia) => {
+                        const fasciaKey = fascia.toLowerCase();
+                        html += `<tr class="border-b ${bgSede}">`;
+
+                        if (idxFascia === 0) {
+                            html += `<td rowspan="2" class="p-3 font-bold text-gray-800 border-r align-middle bg-gray-100/50">${sede.nome}</td>`;
+                        }
+
+                        const badgeFascia = fasciaKey === 'mattina' 
+                            ? '<span class="px-2 py-0.5 bg-amber-100 text-amber-800 rounded text-[11px] font-bold">🌅 Mattina</span>' 
+                            : '<span class="px-2 py-0.5 bg-indigo-100 text-indigo-800 rounded text-[11px] font-bold">🌆 Pomeriggio</span>';
+
+                        html += `<td class="p-2 text-center border-r">${badgeFascia}</td>`;
+
+                        dateSettimana.forEach(d => {
+                            const keyTurno = `${d.dataStr}_${sede.id}_${fasciaKey}`;
+                            const pIdAssegnato = mappaTurni[keyTurno] || "";
+                            
+                            const pAssegnato = listaPromoterGlobale.find(p => p.id == pIdAssegnato);
+                            const nomePromoter = pAssegnato ? `${pAssegnato.nome} ${pAssegnato.cognome}` : '-';
+
+                            const isEvidenziato = promoterFiltroId && promoterFiltroId == pIdAssegnato;
+                            const classeEvidenziato = isEvidenziato ? 'bg-emerald-100 border-2 border-emerald-500 font-bold text-emerald-900 rounded p-1' : '';
+
+                            html += `<td class="p-2 border-r text-center align-middle">`;
+
+                            if (modalitaModificaTurni) {
+                                html += `
+                                    <select onchange="salvaTurnoSingolo('${d.dataStr}', ${sede.id}, '${fasciaKey}', this.value)" 
+                                            class="w-full p-1 border rounded bg-white text-xs font-semibold focus:border-blue-500 outline-none">
+                                        <option value="">-- Vuoto --</option>
+                                        ${listaPromoterGlobale.filter(p => p.attivo).map(p => `
+                                            <option value="${p.id}" ${p.id == pIdAssegnato ? 'selected' : ''}>${p.nome} ${p.cognome}</option>
+                                        `).join('')}
+                                    </select>
+                                `;
+                            } else {
+                                html += `<div class="${classeEvidenziato}">${pIdAssegnato ? nomePromoter : '<span class="text-gray-300 text-xs italic">Nessuno</span>'}</div>`;
+                            }
+
+                            html += `</td>`;
+                        });
+
+                        html += `</tr>`;
+                    });
+                });
+            }
+
+            html += `</tbody></table></div>`;
+            container.innerHTML = html;
+        }
+
+        async function salvaTurnoSingolo(data, sede_id, fascia, promoter_id) {
+            const pIdVal = promoter_id ? parseInt(promoter_id) : null;
+
+            if (pIdVal === null) {
+                await db.from('turni').delete().match({ data, sede_id, fascia });
+            } else {
+                await db.from('turni').upsert(
+                    { data, sede_id, fascia, promoter_id: pIdVal },
+                    { onConflict: 'data,sede_id,fascia' }
+                );
+            }
+        }
+
+        // ==========================================
+        // GESTIONE CODICE FISCALE
+        // ==========================================
         function inizializzaSelettoriCF() {
             const selGiorno = document.getElementById('cf-giorno');
             const selMese = document.getElementById('cf-mese');
@@ -1147,10 +1360,12 @@
             <button id="btn-nav-nuovo" onclick="cambiaScheda('nuovo')" class="px-4 py-2 rounded-t font-semibold shadow-sm transition tab-inattivo">📝 Nuovo Contratto</button>
             <button id="btn-nav-registro" onclick="cambiaScheda('registro')" class="px-4 py-2 rounded-t font-semibold shadow-sm transition tab-inattivo">📋 Registro</button>
             <button id="btn-nav-statistiche" onclick="cambiaScheda('statistiche'); impostaPeriodoStat('tutto');" class="px-4 py-2 rounded-t font-semibold shadow-sm transition tab-inattivo">📊 Statistiche</button>
+            <button id="btn-nav-turni" onclick="cambiaScheda('turni')" class="px-4 py-2 rounded-t font-semibold shadow-sm transition tab-inattivo">📅 Turni</button>
             <button id="btn-nav-liste" onclick="cambiaScheda('liste')" class="px-4 py-2 rounded-t font-semibold shadow-sm transition tab-inattivo">⚙️ Gestione Liste</button>
             <button id="btn-nav-calcola-cf" onclick="cambiaScheda('calcola-cf')" class="px-4 py-2 rounded-t font-semibold shadow-sm transition tab-inattivo">🧮 Calcola CF</button>
         </div>
 
+        <!-- SCHEDA 0: HOME DASHBOARD -->
         <div id="sez-home" class="hidden p-6 bg-white border border-gray-200 rounded shadow-sm text-center">
             <h2 class="text-2xl font-bold text-blue-600 mb-2">Benvenuto in Enel Stand Manager</h2>
             <p class="text-gray-500 mb-6">Seleziona la tua sede per iniziare e monitorare la giornata in tempo reale.</p>
@@ -1181,6 +1396,7 @@
             </div>
         </div>
 
+        <!-- SCHEDA 1: NUOVO CONTRATTO -->
         <div id="sez-nuovo" class="hidden p-6 bg-gray-50 border border-gray-200 rounded shadow-sm">
             <div id="container-nuovo">
                 <div id="il-mio-form">
@@ -1261,6 +1477,7 @@
             </div>
         </div>
 
+        <!-- SCHEDA 2: REGISTRO -->
         <div id="sez-registro" class="hidden p-4 bg-white border border-gray-200 rounded shadow-sm">
             <div class="mb-6 p-4 bg-blue-50 rounded border border-blue-100">
                 <h3 class="text-sm font-bold text-blue-800 mb-3">🔍 Filtra Contratti</h3>
@@ -1334,6 +1551,7 @@
             </div>
         </div>
 
+        <!-- SCHEDA 3: STATISTICHE -->
         <div id="sez-statistiche" class="hidden p-6 bg-white border border-gray-200 rounded shadow-sm space-y-6">
             
             <div class="p-4 bg-blue-50 border border-blue-100 rounded">
@@ -1440,6 +1658,38 @@
             </div>
         </div>
 
+        <!-- SCHEDA TURNI SETTIMANALI -->
+        <div id="sez-turni" class="hidden p-6 bg-white border border-gray-200 rounded shadow-sm space-y-6">
+            <div class="p-4 bg-blue-50 border border-blue-100 rounded flex flex-wrap justify-between items-center gap-4">
+                <div>
+                    <h2 class="text-xl font-bold text-gray-800 flex items-center gap-2">📅 Tabellone Turni Settimanali</h2>
+                    <p class="text-xs text-gray-600 mt-1">I turni sono in sola lettura. La responsabile può sbloccare la modifica inserendo il PIN.</p>
+                </div>
+                
+                <div class="flex flex-wrap items-center gap-2">
+                    <button id="btn-lock-turni" onclick="apriModalPinTurni()" class="px-4 py-2 bg-gray-700 hover:bg-gray-800 text-white font-bold rounded shadow transition text-xs flex items-center gap-1">
+                        🔒 Sblocca Modifica (Responsabile)
+                    </button>
+                </div>
+            </div>
+
+            <div class="flex flex-wrap justify-between items-center gap-4 bg-gray-50 p-3 rounded border">
+                <div class="flex items-center gap-2">
+                    <button onclick="cambiaSettimanaTurni(-1)" class="px-3 py-1.5 bg-gray-200 hover:bg-gray-300 font-bold rounded text-xs shadow-sm">⬅️ Settimana Prec.</button>
+                    <span id="turni-range-date" class="font-bold text-blue-700 text-sm px-2 text-center min-w-[200px]"></span>
+                    <button onclick="cambiaSettimanaTurni(1)" class="px-3 py-1.5 bg-gray-200 hover:bg-gray-300 font-bold rounded text-xs shadow-sm">Settimana Succ. ➡️</button>
+                </div>
+
+                <div class="flex items-center gap-2 min-w-[280px]">
+                    <label class="text-xs font-bold text-gray-700 whitespace-nowrap">🔍 Evidenzia Promoter:</label>
+                    <select id="turni-filtro-promoter" onchange="caricaTabellaTurni()" class="w-full p-1.5 border rounded bg-white text-xs font-semibold"></select>
+                </div>
+            </div>
+
+            <div id="turni-griglia-container"></div>
+        </div>
+
+        <!-- SCHEDA 4: GESTIONE LISTE -->
         <div id="sez-liste" class="hidden p-6 bg-white border border-gray-200 rounded shadow-sm">
             <h2 class="text-2xl font-bold mb-6 text-gray-800 border-b pb-2">⚙️ Gestione Liste (Promoter e Sedi)</h2>
             <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
@@ -1489,6 +1739,7 @@
             </div>
         </div>
 
+        <!-- SCHEDA 5: CALCOLO CODICE FISCALE -->
         <div id="sez-calcola-cf" class="hidden p-8 bg-white border border-gray-200 rounded shadow-sm max-w-3xl mx-auto">
             <h2 class="text-xl font-bold mb-6 text-gray-800 border-b pb-2">🧮 Calcolo Codice Fiscale</h2>
             
@@ -1558,6 +1809,7 @@
 
     </div>
 
+    <!-- POP-UP QR CODE -->
     <div id="modal-qr" class="hidden fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4">
         <div class="bg-white rounded-lg shadow-xl w-full max-w-sm p-6 relative text-center">
             <button onclick="chiudiModalQR()" class="absolute top-4 right-4 text-gray-500 hover:text-red-600 font-bold text-xl">X</button>
@@ -1570,6 +1822,21 @@
         </div>
     </div>
 
+    <!-- POP-UP INSERIMENTO PIN PER MODIFICA TURNI -->
+    <div id="modal-pin-turni" class="hidden fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4">
+        <div class="bg-white rounded-lg shadow-xl w-full max-w-xs p-6 relative text-center">
+            <h3 class="text-base font-bold text-gray-800 mb-2">🔑 Accesso Responsabile</h3>
+            <p class="text-xs text-gray-500 mb-4">Inserisci il PIN numerico per abilitare la modifica dei turni:</p>
+            <input type="password" id="input-pin-turni" maxlength="8" placeholder="••••" class="w-full p-2 border-2 border-blue-400 rounded text-center text-lg font-bold mb-2 tracking-widest outline-none">
+            <p id="msg-errore-pin" class="hidden text-xs text-red-600 font-bold mb-3">PIN errato! Riprova.</p>
+            <div class="flex gap-2">
+                <button onclick="chiudiModalPinTurni()" class="w-1/2 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold rounded text-xs">Annulla</button>
+                <button onclick="verificaPinTurni()" class="w-1/2 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded text-xs">Sblocca</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- SOTTOFINESTRA MODIFICA -->
     <div id="modal-modifica" class="hidden fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4">
         <div class="bg-white rounded-lg shadow-xl w-full max-w-6xl max-h-[95vh] overflow-y-auto p-6 relative">
             <button onclick="chiudiModalModifica()" class="absolute top-4 right-4 text-gray-500 hover:text-red-600 font-bold text-xl">X</button>
@@ -1577,6 +1844,7 @@
         </div>
     </div>
 
+    <!-- SOTTOFINESTRA DETTAGLI -->
     <div id="modal-dettagli" class="hidden fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4">
         <div class="bg-white rounded-lg shadow-xl w-full max-w-md p-6 relative">
             <button onclick="chiudiModalDettagli()" class="absolute top-4 right-4 text-gray-500 hover:text-red-600 font-bold text-xl">X</button>
@@ -1586,6 +1854,7 @@
         </div>
     </div>
 
+    <!-- SOTTOFINESTRA LICENZIAMENTO (CALENDARIO) -->
     <div id="modal-licenziamento" class="hidden fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4">
         <div class="bg-white rounded-lg shadow-xl w-full max-w-sm p-6 relative">
             <h3 class="text-lg font-bold text-red-600 mb-4 border-b pb-2">Licenzia Promoter</h3>
