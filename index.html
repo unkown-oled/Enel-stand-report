@@ -24,7 +24,6 @@
         const SUPABASE_KEY = 'sb_publishable_RJkiCWD7payPFOxUlHz_uw_yQMz5Ydf';
         const db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
-        // PIN RESPONSABILE PER MODIFICA TURNI
         const PIN_RESPONSABILE = "1234";
         let modalitaModificaTurni = false;
         let dataInizioSettimanaCorrente = null;
@@ -1067,7 +1066,6 @@
             document.getElementById('turni-range-date').textContent = 
                 `${lunedi.toLocaleDateString('it-IT', { day: '2-digit', month: 'short' })} - ${domenica.toLocaleDateString('it-IT', { day: '2-digit', month: 'short', year: 'numeric' })}`;
 
-            // Scarica turni della settimana
             const { data: turni, error } = await db.from('turni')
                 .select('*')
                 .gte('data', strLunedi)
@@ -1098,13 +1096,18 @@
 
             const promoterFiltroId = document.getElementById('turni-filtro-promoter').value;
 
+            const listaFasce = [
+                { key: '10-15', label: '10:00 - 15:00', badgeClass: 'bg-amber-100 text-amber-800' },
+                { key: '15-20:30', label: '15:00 - 20:30', badgeClass: 'bg-indigo-100 text-indigo-800' }
+            ];
+
             let html = `
                 <div class="overflow-x-auto bg-white border border-gray-200 rounded shadow-sm">
                     <table class="w-full text-left border-collapse min-w-[900px]">
                         <thead>
                             <tr class="bg-blue-600 text-white text-xs uppercase font-bold text-center">
                                 <th class="p-3 text-left w-48 border-r border-blue-500">Sede Stand</th>
-                                <th class="p-3 w-28 border-r border-blue-500">Fascia</th>
+                                <th class="p-3 w-36 border-r border-blue-500">Fascia Oraria</th>
                                 ${dateSettimana.map(d => `<th class="p-3 border-r border-blue-500">${d.giornoNome}<br><span class="text-[10px] text-blue-100 font-normal">${d.dataLabel}</span></th>`).join('')}
                             </tr>
                         </thead>
@@ -1117,22 +1120,19 @@
                 listaSediGlobale.forEach((sede, idxSede) => {
                     const bgSede = idxSede % 2 === 0 ? 'bg-white' : 'bg-gray-50';
                     
-                    ['Mattina', 'Pomeriggio'].forEach((fascia, idxFascia) => {
-                        const fasciaKey = fascia.toLowerCase();
+                    listaFasce.forEach((fasciaObj, idxFascia) => {
                         html += `<tr class="border-b ${bgSede}">`;
 
                         if (idxFascia === 0) {
                             html += `<td rowspan="2" class="p-3 font-bold text-gray-800 border-r align-middle bg-gray-100/50">${sede.nome}</td>`;
                         }
 
-                        const badgeFascia = fasciaKey === 'mattina' 
-                            ? '<span class="px-2 py-0.5 bg-amber-100 text-amber-800 rounded text-[11px] font-bold">🌅 Mattina</span>' 
-                            : '<span class="px-2 py-0.5 bg-indigo-100 text-indigo-800 rounded text-[11px] font-bold">🌆 Pomeriggio</span>';
+                        const badgeFascia = `<span class="px-2 py-0.5 ${fasciaObj.badgeClass} rounded text-[11px] font-bold">${fasciaObj.label}</span>`;
 
                         html += `<td class="p-2 text-center border-r">${badgeFascia}</td>`;
 
                         dateSettimana.forEach(d => {
-                            const keyTurno = `${d.dataStr}_${sede.id}_${fasciaKey}`;
+                            const keyTurno = `${d.dataStr}_${sede.id}_${fasciaObj.key}`;
                             const pIdAssegnato = mappaTurni[keyTurno] || "";
                             
                             const pAssegnato = listaPromoterGlobale.find(p => p.id == pIdAssegnato);
@@ -1145,7 +1145,7 @@
 
                             if (modalitaModificaTurni) {
                                 html += `
-                                    <select onchange="salvaTurnoSingolo('${d.dataStr}', ${sede.id}, '${fasciaKey}', this.value)" 
+                                    <select onchange="salvaTurnoSingolo('${d.dataStr}', ${sede.id}, '${fasciaObj.key}', this.value)" 
                                             class="w-full p-1 border rounded bg-white text-xs font-semibold focus:border-blue-500 outline-none">
                                         <option value="">-- Vuoto --</option>
                                         ${listaPromoterGlobale.filter(p => p.attivo).map(p => `
