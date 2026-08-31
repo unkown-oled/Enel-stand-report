@@ -1074,12 +1074,25 @@
 
         function aggiornaStatoPulsantePin() {
             const btn = document.getElementById('btn-lock-turni');
+            const btnCopertura = document.getElementById('btn-copertura');
+
             if (modalitaModificaTurni) {
                 btn.className = "px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded shadow transition text-xs flex items-center gap-1";
                 btn.innerHTML = "🔓 Modalità Modifica Attiva (Clicca per Bloccare)";
+
+                // Mostra il pulsante copertura
+                btnCopertura.classList.remove('hidden');
+                btnCopertura.classList.add('flex');
             } else {
                 btn.className = "px-4 py-2 bg-gray-700 hover:bg-gray-800 text-white font-bold rounded shadow transition text-xs flex items-center gap-1";
                 btn.innerHTML = "🔒 Sblocca Modifica (Responsabile)";
+
+                // Nascondi il pulsante copertura
+                btnCopertura.classList.add('hidden');
+                btnCopertura.classList.remove('flex');
+
+                // Se la finestra della copertura è aperta, chiudila in automatico
+                document.getElementById('modal-copertura-turni').classList.add('hidden');
             }
         }
 
@@ -1983,7 +1996,8 @@
                 </div>
                 
                 <div class="flex flex-wrap items-center gap-2">
-                    <button onclick="togglePannelloCopertura()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded shadow transition text-xs flex items-center gap-1">
+                    <!-- Pulsante copertura nascosto di default -->
+                    <button id="btn-copertura" onclick="togglePannelloCopertura()" class="hidden px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded shadow transition text-xs items-center gap-1">
                         🏢 Copertura Sedi & Turni Scoperti
                     </button>
                     <button id="btn-lock-turni" onclick="apriModalPinTurni()" class="px-4 py-2 bg-gray-700 hover:bg-gray-800 text-white font-bold rounded shadow transition text-xs flex items-center gap-1">
