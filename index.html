@@ -45,13 +45,6 @@
         let cacheDateSettimana = [];
         let cacheNoteSettimana = [];
 
-        const listaOrariPersonalizzati = [
-            "08:00-13:00", "08:30-13:30", "09:00-13:00", "09:00-14:00",
-            "09:30-14:30", "10:00-14:00", "10:00-16:00", "13:00-18:00", 
-            "14:00-19:00", "14:30-19:30", "15:00-20:00", "15:30-20:30", 
-            "16:00-21:00", "09:00-18:00", "10:00-19:00", "11:00-20:00"
-        ];
-
         const databaseComuni = {
             "CATANIA": "C351", "MISTERBIANCO": "F250", "ACIREALE": "A028", "PATERNÒ": "G371",
             "ADRANO": "A056", "BELPASSO": "A766", "BIANCAVILLA": "A841", "BRONTE": "B202",
@@ -1071,20 +1064,14 @@
 
         function aggiornaStatoPulsantePin() {
             const btn = document.getElementById('btn-lock-turni');
-            const btnCopertura = document.getElementById('btn-copertura');
-
+            
+            // Il pulsante della copertura è sempre visibile e non va più nascosto qui
             if (modalitaModificaTurni) {
                 btn.className = "px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded shadow transition text-xs flex items-center gap-1";
                 btn.innerHTML = "🔓 Modalità Modifica Attiva (Clicca per Bloccare)";
-
-                btnCopertura.classList.remove('hidden');
-                btnCopertura.classList.add('flex');
             } else {
                 btn.className = "px-4 py-2 bg-gray-700 hover:bg-gray-800 text-white font-bold rounded shadow transition text-xs flex items-center gap-1";
                 btn.innerHTML = "🔒 Sblocca Modifica (Responsabile)";
-
-                btnCopertura.classList.add('hidden');
-                btnCopertura.classList.remove('flex');
                 document.getElementById('modal-copertura-turni').classList.add('hidden');
             }
         }
@@ -1139,31 +1126,46 @@
             }
         }
 
+        function gestisciCambioPreset(promoterId, dataStr, valore) {
+            const inputCustom = document.getElementById(`custom-input-${promoterId}-${dataStr}`);
+            
+            if (valore === 'CUSTOM') {
+                inputCustom.classList.remove('hidden');
+                inputCustom.focus();
+            } else {
+                inputCustom.classList.add('hidden');
+                inviaTurnoPromoter(promoterId, dataStr);
+            }
+        }
+
         async function inviaTurnoPromoter(promoterId, dataStr) {
             const selectSede = document.getElementById(`sede-${promoterId}-${dataStr}`);
-            const selectOrario = document.getElementById(`orario-${promoterId}-${dataStr}`);
+            const selectPreset = document.getElementById(`preset-${promoterId}-${dataStr}`);
+            const inputCustom = document.getElementById(`custom-input-${promoterId}-${dataStr}`);
 
             const sedeVal = selectSede.value ? parseInt(selectSede.value) : null;
-            const orarioVal = selectOrario.value;
+            const presetVal = selectPreset.value;
 
-            selectSede.classList.add('opacity-50');
-            selectOrario.classList.add('opacity-50');
-
-            if (!orarioVal || sedeVal === null) {
+            // Se manca la sede o selezioni l'opzione vuota, cancella il turno
+            if (!presetVal || sedeVal === null) {
                 await db.from('turni').delete().match({ data: dataStr, promoter_id: promoterId });
                 cacheTurniSettimana = cacheTurniSettimana.filter(t => !(t.data === dataStr && t.promoter_id == promoterId));
-                
-                selectSede.classList.remove('opacity-50');
-                selectOrario.classList.remove('opacity-50');
                 aggiornaOreInUI(promoterId);
                 return;
+            }
+
+            let orarioFinale = presetVal;
+            if (presetVal === 'CUSTOM') {
+                orarioFinale = inputCustom.value.trim();
+                // Se ha scelto personalizzato ma non ha ancora digitato l'orario non salvare ancora
+                if(!orarioFinale) return; 
             }
 
             const payload = {
                 data: dataStr,
                 promoter_id: promoterId,
                 sede_id: sedeVal,
-                orario: orarioVal
+                orario: orarioFinale
             };
 
             await db.from('turni').upsert(payload, { onConflict: 'data,promoter_id' });
@@ -1171,13 +1173,11 @@
             const idx = cacheTurniSettimana.findIndex(t => t.data === dataStr && t.promoter_id == promoterId);
             if (idx > -1) {
                 cacheTurniSettimana[idx].sede_id = sedeVal;
-                cacheTurniSettimana[idx].orario = orarioVal;
+                cacheTurniSettimana[idx].orario = orarioFinale;
             } else {
                 cacheTurniSettimana.push({ ...payload });
             }
 
-            selectSede.classList.remove('opacity-50');
-            selectOrario.classList.remove('opacity-50');
             aggiornaOreInUI(promoterId);
         }
 
@@ -1320,23 +1320,9 @@
 
                         if (modalitaModificaTurni) {
                             const sedeAttuale = turno ? turno.sede_id : '';
-                            const orarioAttuale = turno ? turno.orario : '';
-
-                            let orariCustomOptions = `<option value="">-- Inserisci Orario --</option>`;
-                            orariCustomOptions += `<optgroup label="Standard">
-                                <option value="10-15" ${orarioAttuale === '10-15' ? 'selected' : ''}>10:00 - 15:00</option>
-                                <option value="15-20:30" ${orarioAttuale === '15-20:30' ? 'selected' : ''}>15:00 - 20:30</option>
-                            </optgroup>
-                            <optgroup label="Personalizzati">`;
-                            
-                            listaOrariPersonalizzati.forEach(o => {
-                                orariCustomOptions += `<option value="${o}" ${orarioAttuale === o ? 'selected' : ''}>${o}</option>`;
-                            });
-                            
-                            if (orarioAttuale && !['10-15', '15-20:30'].includes(orarioAttuale) && !listaOrariPersonalizzati.includes(orarioAttuale)) {
-                                orariCustomOptions += `<option value="${orarioAttuale}" selected>${orarioAttuale}</option>`;
-                            }
-                            orariCustomOptions += `</optgroup>`;
+                            const orarioAttuale = turno ? (turno.orario || '') : '';
+                            const isStandard = ['10-15', '15-20:30', ''].includes(orarioAttuale);
+                            const selectValue = isStandard ? orarioAttuale : 'CUSTOM';
 
                             html += `
                                 <div class="space-y-1.5 p-1 bg-white border border-gray-200 rounded shadow-xs">
@@ -1347,11 +1333,20 @@
                                         ${listaSediGlobale.map(s => `<option value="${s.id}" ${s.id == sedeAttuale ? 'selected' : ''}>${s.nome}</option>`).join('')}
                                     </select>
 
-                                    <select id="orario-${p.id}-${d.dataStr}" 
-                                            onchange="inviaTurnoPromoter(${p.id}, '${d.dataStr}')" 
-                                            class="w-full p-1 border rounded bg-white text-[11px] font-bold outline-none focus:border-blue-500 mt-1 transition-opacity">
-                                        ${orariCustomOptions}
+                                    <select id="preset-${p.id}-${d.dataStr}" 
+                                            onchange="gestisciCambioPreset(${p.id}, '${d.dataStr}', this.value)" 
+                                            class="w-full p-1 border rounded bg-white text-[11px] font-bold outline-none focus:border-blue-500 transition-opacity">
+                                        <option value="" ${selectValue === '' ? 'selected' : ''}>-- Seleziona Orario --</option>
+                                        <option value="10-15" ${selectValue === '10-15' ? 'selected' : ''} class="text-amber-800">10:00 - 15:00</option>
+                                        <option value="15-20:30" ${selectValue === '15-20:30' ? 'selected' : ''} class="text-indigo-800">15:00 - 20:30</option>
+                                        <option value="CUSTOM" ${selectValue === 'CUSTOM' ? 'selected' : ''} class="text-purple-700">✏️ Personalizzato</option>
                                     </select>
+
+                                    <input type="text" id="custom-input-${p.id}-${d.dataStr}" 
+                                           value="${!isStandard ? orarioAttuale : ''}"
+                                           onchange="inviaTurnoPromoter(${p.id}, '${d.dataStr}')"
+                                           placeholder="es. 10:00-15:30"
+                                           class="${selectValue === 'CUSTOM' ? '' : 'hidden'} w-full p-1 border border-purple-300 rounded bg-purple-50 text-[10px] text-center font-bold outline-none focus:border-purple-600 mt-1 transition-opacity">
                                 </div>
                             `;
                         } else {
@@ -1970,7 +1965,8 @@
                 </div>
                 
                 <div class="flex flex-wrap items-center gap-2">
-                    <button id="btn-copertura" onclick="togglePannelloCopertura()" class="hidden px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded shadow transition text-xs items-center gap-1">
+                    <!-- Pulsante copertura SEMPRE visibile -->
+                    <button id="btn-copertura" onclick="togglePannelloCopertura()" class="flex px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded shadow transition text-xs items-center gap-1">
                         🏢 Copertura Sedi & Turni Scoperti
                     </button>
                     <button id="btn-lock-turni" onclick="apriModalPinTurni()" class="px-4 py-2 bg-gray-700 hover:bg-gray-800 text-white font-bold rounded shadow transition text-xs flex items-center gap-1">
